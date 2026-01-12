@@ -154,6 +154,53 @@ class ArchiveService(QObject):
             self.operation_error.emit("Import Error", str(e))
             return False
 
+    def import_folder(self, disk_path: str, pk2_path: str) -> tuple[int, int]:
+        """Import a folder and all contents from disk into the archive.
+
+        Returns (imported_count, failed_count).
+        """
+        logger.info("Importing folder: %s -> %s", disk_path, pk2_path)
+        if not self._stream:
+            return (0, 0)
+        try:
+            imported, failed = self._import_folder_recursive(Path(disk_path), pk2_path)
+            if imported > 0:
+                self.archive_modified.emit()
+            logger.info("Folder import complete: %d imported, %d failed", imported, failed)
+            return (imported, failed)
+        except Exception as e:
+            logger.exception("Import folder failed: %s", disk_path)
+            self.operation_error.emit("Import Folder Error", str(e))
+            return (0, 1)
+
+    def _import_folder_recursive(self, disk_path: Path, pk2_path: str) -> tuple[int, int]:
+        """Recursively import folder contents."""
+        imported = 0
+        failed = 0
+
+        for item in disk_path.iterdir():
+            if pk2_path:
+                item_pk2_path = f"{pk2_path}/{item.name}"
+            else:
+                item_pk2_path = item.name
+
+            if item.is_file():
+                try:
+                    content = item.read_bytes()
+                    if self._stream.add_file(item_pk2_path, content):
+                        imported += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    logger.exception("Failed to import: %s", item)
+                    failed += 1
+            elif item.is_dir():
+                sub_imported, sub_failed = self._import_folder_recursive(item, item_pk2_path)
+                imported += sub_imported
+                failed += sub_failed
+
+        return (imported, failed)
+
     def create_folder(self, pk2_path: str) -> bool:
         """Create a new folder in the archive."""
         logger.info("Creating folder: %s", pk2_path)

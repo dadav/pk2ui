@@ -3,13 +3,14 @@
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QSplitter,
     QToolBar,
     QVBoxLayout,
@@ -25,6 +26,22 @@ from features.tree_browser.filter_panel import FilterPanel
 from features.tree_browser.tree_widget import Pk2TreeWidget
 
 logger = logging.getLogger(__name__)
+
+
+class OpenArchiveWorker(QThread):
+    """Worker thread for opening archives without blocking UI."""
+
+    finished = pyqtSignal(bool)  # success status
+
+    def __init__(self, archive_service: "ArchiveService", path: str, key: str) -> None:
+        super().__init__()
+        self._archive_service = archive_service
+        self._path = path
+        self._key = key
+
+    def run(self) -> None:
+        success = self._archive_service.open_archive(self._path, self._key)
+        self.finished.emit(success)
 
 
 class MainWindow(QMainWindow):
@@ -80,6 +97,10 @@ class MainWindow(QMainWindow):
         self._import_action = QAction("&Import File...", self)
         self._import_action.triggered.connect(self._on_import)
         edit_menu.addAction(self._import_action)
+
+        self._import_folder_action = QAction("Import &Folder...", self)
+        self._import_folder_action.triggered.connect(self._on_import_folder)
+        edit_menu.addAction(self._import_folder_action)
 
         self._new_folder_action = QAction("&New Folder...", self)
         self._new_folder_action.triggered.connect(self._on_new_folder)
@@ -186,6 +207,7 @@ class MainWindow(QMainWindow):
         self._tree_widget.delete_requested.connect(self._on_delete_item)
         self._tree_widget.delete_multiple_requested.connect(self._on_delete_multiple)
         self._tree_widget.import_requested.connect(self._on_import_to_folder)
+        self._tree_widget.import_folder_requested.connect(self._on_import_folder_to)
         self._tree_widget.new_folder_requested.connect(self._on_new_folder_in)
 
     def _update_ui_state(self) -> None:
@@ -195,6 +217,7 @@ class MainWindow(QMainWindow):
 
         self._close_action.setEnabled(is_open)
         self._import_action.setEnabled(is_open)
+        self._import_folder_action.setEnabled(is_open)
         self._new_folder_action.setEnabled(is_open)
         self._delete_action.setEnabled(is_open and has_selection)
 
@@ -211,7 +234,25 @@ class MainWindow(QMainWindow):
             path = dialog.file_path
             key = dialog.encryption_key
             if path:
-                self._archive_service.open_archive(path, key)
+                self._open_archive_async(path, key)
+
+    def _open_archive_async(self, path: str, key: str) -> None:
+        """Open archive in background thread with progress dialog."""
+        self._progress = QProgressDialog("Opening archive...", None, 0, 0, self)
+        self._progress.setWindowTitle("Please Wait")
+        self._progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._progress.setCancelButton(None)
+        self._progress.setMinimumDuration(0)
+        self._progress.show()
+
+        self._open_worker = OpenArchiveWorker(self._archive_service, path, key)
+        self._open_worker.finished.connect(self._on_open_worker_finished)
+        self._open_worker.start()
+
+    def _on_open_worker_finished(self, success: bool) -> None:
+        """Handle archive open worker completion."""
+        self._progress.close()
+        self._open_worker.deleteLater()
 
     def _on_close(self) -> None:
         """Handle close action."""
@@ -234,6 +275,14 @@ class MainWindow(QMainWindow):
             self._on_import_to_folder(selected)
         else:
             self._on_import_to_folder("")
+
+    def _on_import_folder(self) -> None:
+        """Handle import folder action from menu."""
+        selected = self._tree_widget.get_selected_path()
+        if selected and self._tree_widget.get_selected_is_folder():
+            self._on_import_folder_to(selected)
+        else:
+            self._on_import_folder_to("")
 
     def _on_new_folder(self) -> None:
         """Handle new folder action from menu/toolbar."""
@@ -425,6 +474,29 @@ class MainWindow(QMainWindow):
             else:
                 pk2_path = file_name
             self._archive_service.import_file(file_path, pk2_path)
+
+    def _on_import_folder_to(self, target_folder: str) -> None:
+        """Handle import folder request to specific folder."""
+        folder_path = QFileDialog.getExistingDirectory(
+            self, "Select Folder to Import", ""
+        )
+        if folder_path:
+            folder_name = Path(folder_path).name
+            if target_folder:
+                pk2_path = f"{target_folder}/{folder_name}"
+            else:
+                pk2_path = folder_name
+            imported, failed = self._archive_service.import_folder(folder_path, pk2_path)
+            if failed == 0:
+                QMessageBox.information(
+                    self, "Import Complete", f"Imported {imported} files."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Import Partial",
+                    f"Imported {imported} files, {failed} failed.",
+                )
 
     def _on_new_folder_in(self, parent_path: str) -> None:
         """Handle new folder request in specific parent."""

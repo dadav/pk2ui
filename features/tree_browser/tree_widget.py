@@ -36,6 +36,7 @@ class Pk2TreeWidget(QTreeWidget):
     delete_requested = pyqtSignal(str, bool)  # path, is_folder
     delete_multiple_requested = pyqtSignal(list)  # list of (path, is_folder) tuples
     import_requested = pyqtSignal(str)  # target folder path
+    import_folder_requested = pyqtSignal(str)  # target folder path
     new_folder_requested = pyqtSignal(str)  # parent folder path
 
     def __init__(self) -> None:
@@ -86,8 +87,10 @@ class Pk2TreeWidget(QTreeWidget):
             if not self._folder_passes_filter(name, subfolder):
                 continue
 
-            full_path = f"{path_prefix}/{name}" if path_prefix else name
-            item = QTreeWidgetItem([name, "", "Folder"])
+            # Use subfolder.name for display (preserves original case)
+            display_name = subfolder.name if subfolder.name else name
+            full_path = f"{path_prefix}/{display_name}" if path_prefix else display_name
+            item = QTreeWidgetItem([display_name, "", "Folder"])
             data = TreeItemData(full_path, True, subfolder)
             item.setData(0, Qt.ItemDataRole.UserRole, data)
 
@@ -103,10 +106,12 @@ class Pk2TreeWidget(QTreeWidget):
             if not self._file_passes_filter(name, file):
                 continue
 
-            full_path = f"{path_prefix}/{name}" if path_prefix else name
+            # Use file.name for display (preserves original case)
+            display_name = file.name if file.name else name
+            full_path = f"{path_prefix}/{display_name}" if path_prefix else display_name
             size_str = self._format_size(file.size)
-            ext = self._get_extension(name)
-            item = QTreeWidgetItem([name, size_str, ext])
+            ext = self._get_extension(display_name)
+            item = QTreeWidgetItem([display_name, size_str, ext])
             data = TreeItemData(full_path, False, file)
             item.setData(0, Qt.ItemDataRole.UserRole, data)
 
@@ -262,6 +267,12 @@ class Pk2TreeWidget(QTreeWidget):
                     lambda: self.import_requested.emit(data.pk2_path)
                 )
                 menu.addAction(import_action)
+
+                import_folder_action = QAction("Import Folder...", self)
+                import_folder_action.triggered.connect(
+                    lambda: self.import_folder_requested.emit(data.pk2_path)
+                )
+                menu.addAction(import_folder_action)
 
                 new_folder_action = QAction("New Folder...", self)
                 new_folder_action.triggered.connect(

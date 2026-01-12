@@ -37,18 +37,22 @@ class TextPreviewWidget(QPlainTextEdit):
 
     def preview_file(self, file: Pk2File) -> None:
         """Preview file content if it's a text file."""
-        ext = self._get_extension(file.name)
-
-        if ext not in TEXT_EXTENSIONS:
-            self.setPlainText(f"[Binary file: {file.name}]")
-            return
-
         if file.size > self.MAX_PREVIEW_SIZE:
             self.setPlainText(f"[File too large for preview: {file.size:,} bytes]")
             return
 
+        ext = self._get_extension(file.name)
+        is_known_text = ext in TEXT_EXTENSIONS
+
         try:
             content = file.get_content()
+
+            # For unknown extensions, check if content looks like text
+            if not is_known_text:
+                if not self._looks_like_text(content):
+                    self.setPlainText(f"[Binary file: {file.name}]")
+                    return
+
             # Try UTF-8 first, fall back to latin-1
             try:
                 text = content.decode("utf-8")
@@ -59,6 +63,11 @@ class TextPreviewWidget(QPlainTextEdit):
         except Exception as e:
             logger.exception("Preview failed: %s", file.name)
             self.setPlainText(f"[Error reading file: {e}]")
+
+    def _looks_like_text(self, content: bytes) -> bool:
+        """Check if content appears to be text (no null bytes in first 8KB)."""
+        sample = content[:8192]
+        return b"\x00" not in sample
 
     def clear_preview(self) -> None:
         """Clear the preview."""
