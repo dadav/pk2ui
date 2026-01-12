@@ -5,7 +5,11 @@ requires-python = ">=3.12"
 [[package]]
 name = "pk2api"
 version = "1.0.0"
-source = { git = "https://github.com/dadav/pk2api#a8e8328ff61799008aa34d0dadf89edbde30f41a" }
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/86/27/e0c5ab7275805a5094d5527b5fde3a31f2dd4fa9976052af23911ee6b436/pk2api-1.0.0.tar.gz", hash = "sha256:18ac44c293c4a3cab60317e9f6794f3a425505b3f95341a5e96319d18d8a5e06", size = 19302, upload-time = "2026-01-12T16:17:58.886Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/31/257a8985f78becc31f63a9cea9bea37857bc73464fa1ab8bd77405e8f8d6/pk2api-1.0.0-py3-none-any.whl", hash = "sha256:0311dc805fd16b796326c6efc124fe88da5ce4db32efe6b861ec17769e807c9f", size = 19650, upload-time = "2026-01-12T16:17:57.086Z" },
+]
 
 [[package]]
 name = "pk2ui"
@@ -18,7 +22,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pk2api", git = "https://github.com/dadav/pk2api" },
+    { name = "pk2api", specifier = "<=2" },
     { name = "pyqt6", specifier = ">=6.5" },
 ]
 

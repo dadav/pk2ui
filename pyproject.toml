@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "PyQt6>=6.5",
-    "pk2api @ git+https://github.com/dadav/pk2api",
+    "pk2api<=2",
 ]
 
 [project.scripts]
