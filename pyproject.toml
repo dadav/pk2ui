@@ -11,3 +11,8 @@ dependencies = [
 
 [project.scripts]
 pk2ui = "main:main"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.17.0",
+]

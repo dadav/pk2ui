@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.archive_service import ArchiveService
+from app.version import get_version
 from features.dialogs.open_archive import NewFolderDialog, OpenArchiveDialog
 from features.file_details.details_panel import DetailsPanel
 from features.text_preview.preview_widget import TextPreviewWidget
@@ -256,7 +257,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About PK2 Archive Editor",
-            "PK2 Archive Editor\n\n"
+            f"PK2 Archive Editor v{get_version()}\n\n"
             "A PyQt6 editor for Silkroad Online PK2 archives.\n\n"
             "Uses pk2api library for archive operations.",
         )
