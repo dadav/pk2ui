@@ -1,0 +1,13 @@
+[project]
+name = "pk2ui"
+version = "0.1.0"
+description = "PyQt6 editor for Silkroad Online PK2 archives"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "PyQt6>=6.5",
+    "pk2api @ git+https://github.com/dadav/pk2api",
+]
+
+[project.scripts]
+pk2ui = "main:main"

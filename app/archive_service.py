@@ -1,0 +1,214 @@
+"""Service layer for PK2 archive operations."""
+
+import logging
+from pathlib import Path
+from typing import Optional
+
+from PyQt6.QtCore import QObject, pyqtSignal
+from pk2api import Pk2AuthenticationError, Pk2File, Pk2Folder, Pk2Stream
+
+logger = logging.getLogger(__name__)
+
+
+class ArchiveService(QObject):
+    """Manages a single PK2 archive instance."""
+
+    # Signals
+    archive_opened = pyqtSignal(str)  # Emits archive path
+    archive_closed = pyqtSignal()
+    archive_modified = pyqtSignal()  # Emits when contents change
+    operation_error = pyqtSignal(str, str)  # title, message
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._stream: Optional[Pk2Stream] = None
+        self._path: Optional[Path] = None
+
+    @property
+    def is_open(self) -> bool:
+        return self._stream is not None
+
+    @property
+    def archive_path(self) -> Optional[Path]:
+        return self._path
+
+    @property
+    def root_folder(self) -> Optional[Pk2Folder]:
+        if self._stream:
+            return self._stream.get_folder("")
+        return None
+
+    def open_archive(self, path: str, key: str = "169841") -> bool:
+        """Open a PK2 archive. Returns True on success."""
+        logger.info("Opening archive: %s", path)
+        self.close_archive()
+        try:
+            self._stream = Pk2Stream(path, key, read_only=False)
+            self._path = Path(path)
+            file_count = self._count_files()
+            logger.info("Archive opened successfully: %d files", file_count)
+            self.archive_opened.emit(path)
+            return True
+        except Pk2AuthenticationError:
+            logger.error("Invalid encryption key for: %s", path)
+            self.operation_error.emit(
+                "Authentication Error", "Invalid encryption key"
+            )
+            return False
+        except Exception as e:
+            logger.exception("Failed to open archive: %s", path)
+            self.operation_error.emit("Open Error", str(e))
+            return False
+
+    def close_archive(self) -> None:
+        """Close the current archive."""
+        if self._stream:
+            logger.info("Closing archive: %s", self._path)
+            self._stream.close()
+            self._stream = None
+            self._path = None
+            self.archive_closed.emit()
+
+    def get_file(self, path: str) -> Optional[Pk2File]:
+        """Get a file by path."""
+        if not self._stream:
+            return None
+        return self._stream.get_file(path)
+
+    def get_folder(self, path: str) -> Optional[Pk2Folder]:
+        """Get a folder by path."""
+        if not self._stream:
+            return None
+        return self._stream.get_folder(path)
+
+    def extract_file(self, pk2_path: str, dest_path: str) -> bool:
+        """Extract a file to disk."""
+        logger.info("Extracting: %s -> %s", pk2_path, dest_path)
+        file = self.get_file(pk2_path)
+        if not file:
+            self.operation_error.emit("Extract Error", f"File not found: {pk2_path}")
+            return False
+        try:
+            content = file.get_content()
+            Path(dest_path).write_bytes(content)
+            logger.info("Extracted %d bytes", len(content))
+            return True
+        except Exception as e:
+            logger.exception("Extract failed: %s", pk2_path)
+            self.operation_error.emit("Extract Error", str(e))
+            return False
+
+    def extract_folder(self, pk2_path: str, dest_path: str) -> bool:
+        """Extract a folder and all contents to disk."""
+        logger.info("Extracting folder: %s -> %s", pk2_path, dest_path)
+        folder = self.get_folder(pk2_path)
+        if not folder:
+            self.operation_error.emit(
+                "Extract Error", f"Folder not found: {pk2_path}"
+            )
+            return False
+        try:
+            dest = Path(dest_path)
+            dest.mkdir(parents=True, exist_ok=True)
+            return self._extract_folder_recursive(folder, dest, pk2_path)
+        except Exception as e:
+            logger.exception("Extract folder failed: %s", pk2_path)
+            self.operation_error.emit("Extract Error", str(e))
+            return False
+
+    def _extract_folder_recursive(
+        self, folder: Pk2Folder, dest: Path, pk2_path: str
+    ) -> bool:
+        """Recursively extract folder contents."""
+        # Extract files
+        for name, file in folder.files.items():
+            file_dest = dest / name
+            content = file.get_content()
+            file_dest.write_bytes(content)
+
+        # Extract subfolders
+        for name, subfolder in folder.folders.items():
+            subfolder_dest = dest / name
+            subfolder_dest.mkdir(exist_ok=True)
+            subfolder_pk2_path = f"{pk2_path}/{name}" if pk2_path else name
+            self._extract_folder_recursive(subfolder, subfolder_dest, subfolder_pk2_path)
+
+        return True
+
+    def import_file(self, disk_path: str, pk2_path: str) -> bool:
+        """Import a file from disk into the archive."""
+        logger.info("Importing: %s -> %s", disk_path, pk2_path)
+        if not self._stream:
+            return False
+        try:
+            content = Path(disk_path).read_bytes()
+            success = self._stream.add_file(pk2_path, content)
+            if success:
+                logger.info("Imported %d bytes", len(content))
+                self.archive_modified.emit()
+            else:
+                self.operation_error.emit("Import Error", "Failed to add file")
+            return success
+        except Exception as e:
+            logger.exception("Import failed: %s", disk_path)
+            self.operation_error.emit("Import Error", str(e))
+            return False
+
+    def create_folder(self, pk2_path: str) -> bool:
+        """Create a new folder in the archive."""
+        logger.info("Creating folder: %s", pk2_path)
+        if not self._stream:
+            return False
+        try:
+            success = self._stream.add_folder(pk2_path)
+            if success:
+                self.archive_modified.emit()
+            else:
+                self.operation_error.emit(
+                    "Create Folder Error", "Folder already exists or invalid path"
+                )
+            return success
+        except Exception as e:
+            logger.exception("Create folder failed: %s", pk2_path)
+            self.operation_error.emit("Create Folder Error", str(e))
+            return False
+
+    def delete_file(self, pk2_path: str) -> bool:
+        """Delete a file from the archive."""
+        logger.info("Deleting file: %s", pk2_path)
+        if not self._stream:
+            return False
+        try:
+            success = self._stream.remove_file(pk2_path)
+            if success:
+                self.archive_modified.emit()
+            return success
+        except Exception as e:
+            logger.exception("Delete failed: %s", pk2_path)
+            self.operation_error.emit("Delete Error", str(e))
+            return False
+
+    def delete_folder(self, pk2_path: str) -> bool:
+        """Delete a folder and its contents."""
+        logger.info("Deleting folder: %s", pk2_path)
+        if not self._stream:
+            return False
+        try:
+            success = self._stream.remove_folder(pk2_path)
+            if success:
+                self.archive_modified.emit()
+            return success
+        except Exception as e:
+            logger.exception("Delete failed: %s", pk2_path)
+            self.operation_error.emit("Delete Error", str(e))
+            return False
+
+    def _count_files(self) -> int:
+        """Count total files in archive."""
+        if not self._stream:
+            return 0
+        return len(self._stream._files)
+
+    def get_file_count(self) -> int:
+        """Get total file count in archive."""
+        return self._count_files()
