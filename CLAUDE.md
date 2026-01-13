@@ -36,7 +36,7 @@ pyinstaller --onefile --noconsole --name pk2ui \
 - **Entry point:** `main.py` → sets up logging, creates QApplication and MainWindow
 - **Service layer:** `app/archive_service.py` → encapsulates all pk2api operations, emits signals on state changes
 - **UI layer:** `app/main_window.py` → main window, menus, toolbar, splitter layout
-- **Features:** `features/` → self-contained modules (tree_browser, file_details, text_preview, dialogs)
+- **Features:** `features/` → self-contained modules (tree_browser, file_details, text_preview, image_preview, dialogs)
 
 ### Signal-Based Communication
 All components communicate via PyQt6 signals rather than direct method calls:
@@ -70,6 +70,26 @@ The application uses pk2api 1.1.0 features with graceful fallback for older vers
 
 ### Filter Panel
 The name filter supports glob patterns (`*.txt`, `data*`, `??.xml`). The filter system uses Python's `fnmatch` module for pattern matching when glob characters are detected.
+
+### Image Preview
+The `TextPreviewWidget` in `features/text_preview/` supports both text and image preview:
+- **Text formats:** .txt, .ini, .xml, .cfg, .log, .json, .csv, .html, .md, .yaml
+- **Image formats:** .ddj, .dds, .png, .jpg, .jpeg, .gif, .bmp, .tga, .ico
+
+#### DDJ/DDS Support
+The `features/image_preview/` module provides pure Python decoders for Silkroad-specific formats:
+- **DDJ:** Joymax container format - strips 20-byte header to expose DDS data
+- **DDS:** DirectDraw Surface with DXT1/DXT3/DXT5 (S3TC) block compression support
+
+DDJ Header Structure:
+```
+Offset  Size  Content
+0       9     "JMXVDDJ 1" magic
+9       3     Padding (0x30 x3)
+12      4     File size - 1 (big-endian)
+16      4     Constant (0x03000000)
+20      ...   DDS data
+```
 
 ## Known Issues
 See `issues.md` for tracked bugs:
