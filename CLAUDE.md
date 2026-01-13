@@ -57,10 +57,20 @@ MainWindow connects these signals to handler methods that coordinate between com
 
 ## Dependencies
 - PyQt6 >= 6.5
-- pk2api <= 2
+- pk2api <= 2 (uses 1.1.0 features when available)
 - pyinstaller >= 6.17.0 (dev only)
+
+## pk2api 1.1.0 Feature Usage
+The application uses pk2api 1.1.0 features with graceful fallback for older versions:
+- **get_stats()**: Used for archive statistics (file count, folder count, sizes) instead of private attribute access
+- **original_name/get_original_path()**: Used for case-accurate display in tree and details panel
+- **extract_folder/extract_all with progress**: Used for folder extraction with progress callbacks
+- **import_from_disk**: Used for bulk folder import
+- **glob()**: Available via `ArchiveService.glob()` method for pattern matching
+
+### Filter Panel
+The name filter supports glob patterns (`*.txt`, `data*`, `??.xml`). The filter system uses Python's `fnmatch` module for pattern matching when glob characters are detected.
 
 ## Known Issues
 See `issues.md` for tracked bugs:
-- Imported files show uppercase in listview when replacing existing
 - UI blocks during PK2 file open operations (needs progress indicator)

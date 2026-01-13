@@ -1,5 +1,6 @@
 """Tree widget for PK2 archive navigation."""
 
+import fnmatch
 import logging
 from typing import Optional
 
@@ -87,9 +88,13 @@ class Pk2TreeWidget(QTreeWidget):
             if not self._folder_passes_filter(name, subfolder):
                 continue
 
-            # Use subfolder.name for display (preserves original case)
-            display_name = subfolder.name if subfolder.name else name
-            full_path = f"{path_prefix}/{display_name}" if path_prefix else display_name
+            # Use original_name for display (pk2api 1.1.0 case preservation)
+            display_name = getattr(subfolder, "original_name", None) or subfolder.name or name
+            # Use get_original_path if available for accurate path
+            original_path = getattr(subfolder, "get_original_path", None)
+            full_path = original_path() if original_path else (
+                f"{path_prefix}/{display_name}" if path_prefix else display_name
+            )
             item = QTreeWidgetItem([display_name, "", "Folder"])
             data = TreeItemData(full_path, True, subfolder)
             item.setData(0, Qt.ItemDataRole.UserRole, data)
@@ -106,9 +111,13 @@ class Pk2TreeWidget(QTreeWidget):
             if not self._file_passes_filter(name, file):
                 continue
 
-            # Use file.name for display (preserves original case)
-            display_name = file.name if file.name else name
-            full_path = f"{path_prefix}/{display_name}" if path_prefix else display_name
+            # Use original_name for display (pk2api 1.1.0 case preservation)
+            display_name = getattr(file, "original_name", None) or file.name or name
+            # Use get_original_path if available for accurate path
+            original_path = getattr(file, "get_original_path", None)
+            full_path = original_path() if original_path else (
+                f"{path_prefix}/{display_name}" if path_prefix else display_name
+            )
             size_str = self._format_size(file.size)
             ext = self._get_extension(display_name)
             item = QTreeWidgetItem([display_name, size_str, ext])
@@ -131,9 +140,17 @@ class Pk2TreeWidget(QTreeWidget):
         if not f.show_files:
             return False
 
-        # Name filter
-        if f.name_pattern and f.name_pattern not in name.lower():
-            return False
+        # Name filter - use fnmatch for glob patterns, substring match otherwise
+        if f.name_pattern:
+            name_lower = name.lower()
+            if f.is_glob_pattern:
+                # Use fnmatch for glob pattern matching
+                if not fnmatch.fnmatch(name_lower, f.name_pattern):
+                    return False
+            else:
+                # Simple substring match
+                if f.name_pattern not in name_lower:
+                    return False
 
         # Type filter
         if f.file_type:
@@ -164,8 +181,15 @@ class Pk2TreeWidget(QTreeWidget):
 
         # Name filter - folders pass if name matches OR contains matching children
         if f.name_pattern:
-            if f.name_pattern in name.lower():
-                return True
+            name_lower = name.lower()
+            if f.is_glob_pattern:
+                # Use fnmatch for glob pattern matching
+                if fnmatch.fnmatch(name_lower, f.name_pattern):
+                    return True
+            else:
+                # Simple substring match
+                if f.name_pattern in name_lower:
+                    return True
             return self._folder_has_matching_children(folder)
 
         # Type/size filters - show folder if it has matching children

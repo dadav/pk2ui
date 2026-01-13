@@ -44,6 +44,38 @@ class OpenArchiveWorker(QThread):
         self.finished.emit(success)
 
 
+class ExtractWorker(QThread):
+    """Worker thread for extraction operations with progress reporting."""
+
+    finished = pyqtSignal(bool)  # success status
+    progress = pyqtSignal(int, int)  # current, total
+
+    def __init__(
+        self,
+        archive_service: "ArchiveService",
+        pk2_path: str,
+        dest_path: str,
+        extract_all: bool = False,
+    ) -> None:
+        super().__init__()
+        self._archive_service = archive_service
+        self._pk2_path = pk2_path
+        self._dest_path = dest_path
+        self._extract_all = extract_all
+
+    def run(self) -> None:
+        def on_progress(current: int, total: int) -> None:
+            self.progress.emit(current, total)
+
+        if self._extract_all:
+            success = self._archive_service.extract_all(self._dest_path, progress=on_progress)
+        else:
+            success = self._archive_service.extract_folder(
+                self._pk2_path, self._dest_path, progress=on_progress
+            )
+        self.finished.emit(success)
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -83,6 +115,12 @@ class MainWindow(QMainWindow):
         self._close_action.setShortcut("Ctrl+W")
         self._close_action.triggered.connect(self._on_close)
         file_menu.addAction(self._close_action)
+
+        file_menu.addSeparator()
+
+        self._extract_all_action = QAction("Extract &All...", self)
+        self._extract_all_action.triggered.connect(self._on_extract_all)
+        file_menu.addAction(self._extract_all_action)
 
         file_menu.addSeparator()
 
@@ -216,6 +254,7 @@ class MainWindow(QMainWindow):
         has_selection = self._tree_widget.get_selected_path() is not None
 
         self._close_action.setEnabled(is_open)
+        self._extract_all_action.setEnabled(is_open)
         self._import_action.setEnabled(is_open)
         self._import_folder_action.setEnabled(is_open)
         self._new_folder_action.setEnabled(is_open)
@@ -257,6 +296,16 @@ class MainWindow(QMainWindow):
     def _on_close(self) -> None:
         """Handle close action."""
         self._archive_service.close_archive()
+
+    def _on_extract_all(self) -> None:
+        """Handle extract all action - extract entire archive."""
+        dest = QFileDialog.getExistingDirectory(
+            self, "Select Destination Folder for Full Extraction", ""
+        )
+        if dest:
+            archive_name = self._archive_service.archive_path.stem if self._archive_service.archive_path else "archive"
+            dest_path = str(Path(dest) / archive_name)
+            self._start_extraction("", dest_path, extract_all=True)
 
     def _on_extract(self) -> None:
         """Handle extract action from toolbar."""
@@ -303,13 +352,21 @@ class MainWindow(QMainWindow):
 
     def _on_about(self) -> None:
         """Show about dialog."""
-        QMessageBox.about(
-            self,
-            "About PK2 Archive Editor",
+        about_text = (
             f"PK2 Archive Editor v{get_version()}\n\n"
             "A PyQt6 editor for Silkroad Online PK2 archives.\n\n"
-            "Uses pk2api library for archive operations.",
+            "Uses pk2api library for archive operations."
         )
+        if self._archive_service.is_open:
+            stats = self._archive_service.get_stats()
+            about_text += (
+                f"\n\nCurrent archive:\n"
+                f"  Files: {stats.get('files', 0):,}\n"
+                f"  Folders: {stats.get('folders', 0):,}\n"
+                f"  Total size: {self._format_size(stats.get('total_size', 0))}\n"
+                f"  Disk used: {self._format_size(stats.get('disk_used', 0))}"
+            )
+        QMessageBox.about(self, "About PK2 Archive Editor", about_text)
 
     # Archive service callbacks
 
@@ -319,8 +376,12 @@ class MainWindow(QMainWindow):
         root = self._archive_service.root_folder
         if root:
             self._tree_widget.populate(root)
-        file_count = self._archive_service.get_file_count()
-        self._statusbar.showMessage(f"{path} | {file_count} files")
+        stats = self._archive_service.get_stats()
+        size_str = self._format_size(stats.get("total_size", 0))
+        self._statusbar.showMessage(
+            f"{path} | {stats.get('files', 0)} files, "
+            f"{stats.get('folders', 0)} folders | {size_str}"
+        )
         self.setWindowTitle(f"PK2 Archive Editor - {Path(path).name}")
         self._update_ui_state()
 
@@ -431,10 +492,7 @@ class MainWindow(QMainWindow):
             if dest:
                 folder_name = pk2_path.split("/")[-1] if pk2_path else "root"
                 dest_path = str(Path(dest) / folder_name)
-                if self._archive_service.extract_folder(pk2_path, dest_path):
-                    QMessageBox.information(
-                        self, "Extract Complete", f"Extracted to: {dest_path}"
-                    )
+                self._start_extraction(pk2_path, dest_path)
         else:
             file_name = pk2_path.split("/")[-1]
             dest, _ = QFileDialog.getSaveFileName(
@@ -445,6 +503,44 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(
                         self, "Extract Complete", f"Extracted to: {dest}"
                     )
+
+    def _start_extraction(
+        self, pk2_path: str, dest_path: str, extract_all: bool = False
+    ) -> None:
+        """Start folder extraction with progress dialog."""
+        self._extract_dest = dest_path
+        self._extract_progress = QProgressDialog(
+            "Extracting files...", "Cancel", 0, 100, self
+        )
+        self._extract_progress.setWindowTitle("Extracting")
+        self._extract_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._extract_progress.setMinimumDuration(0)
+        self._extract_progress.setValue(0)
+        self._extract_progress.show()
+
+        self._extract_worker = ExtractWorker(
+            self._archive_service, pk2_path, dest_path, extract_all
+        )
+        self._extract_worker.progress.connect(self._on_extract_progress)
+        self._extract_worker.finished.connect(self._on_extract_finished)
+        self._extract_progress.canceled.connect(self._extract_worker.terminate)
+        self._extract_worker.start()
+
+    def _on_extract_progress(self, current: int, total: int) -> None:
+        """Handle extraction progress update."""
+        if total > 0:
+            percent = int(current * 100 / total)
+            self._extract_progress.setValue(percent)
+            self._extract_progress.setLabelText(f"Extracting files... ({current}/{total})")
+
+    def _on_extract_finished(self, success: bool) -> None:
+        """Handle extraction completion."""
+        self._extract_progress.close()
+        self._extract_worker.deleteLater()
+        if success:
+            QMessageBox.information(
+                self, "Extract Complete", f"Extracted to: {self._extract_dest}"
+            )
 
     def _on_delete_item(self, pk2_path: str, is_folder: bool) -> None:
         """Handle delete request."""
@@ -510,3 +606,14 @@ class MainWindow(QMainWindow):
         """Handle window close."""
         self._archive_service.close_archive()
         event.accept()
+
+    def _format_size(self, size: int) -> str:
+        """Format byte size for display."""
+        if size < 1024:
+            return f"{size} B"
+        elif size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        elif size < 1024 * 1024 * 1024:
+            return f"{size / (1024 * 1024):.1f} MB"
+        else:
+            return f"{size / (1024 * 1024 * 1024):.1f} GB"

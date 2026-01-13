@@ -28,19 +28,29 @@ class DetailsPanel(QWidget):
 
     def show_file(self, file: Pk2File) -> None:
         """Display file details."""
-        self._name_label.setText(file.name)
+        # Use original_name for case-accurate display (pk2api 1.1.0)
+        display_name = getattr(file, "original_name", None) or file.name
+        self._name_label.setText(display_name)
         self._type_label.setText("File")
         self._size_label.setText(self._format_size(file.size))
-        self._path_label.setText(file.get_full_path())
+        # Use get_original_path for case-accurate path (pk2api 1.1.0)
+        original_path = getattr(file, "get_original_path", None)
+        path = original_path() if original_path else file.get_full_path()
+        self._path_label.setText(path)
 
     def show_folder(self, folder: Pk2Folder) -> None:
         """Display folder details."""
-        self._name_label.setText(folder.name or "(root)")
+        # Use original_name for case-accurate display (pk2api 1.1.0)
+        display_name = getattr(folder, "original_name", None) or folder.name
+        self._name_label.setText(display_name or "(root)")
         self._type_label.setText("Folder")
         file_count = len(folder.files)
         folder_count = len(folder.folders)
         self._size_label.setText(f"{file_count} files, {folder_count} folders")
-        self._path_label.setText(folder.get_full_path() or "/")
+        # Use get_original_path for case-accurate path (pk2api 1.1.0)
+        original_path = getattr(folder, "get_original_path", None)
+        path = original_path() if original_path else folder.get_full_path()
+        self._path_label.setText(path or "/")
 
     def clear(self) -> None:
         """Clear all details."""

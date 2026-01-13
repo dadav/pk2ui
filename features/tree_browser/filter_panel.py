@@ -19,6 +19,7 @@ class FilterCriteria:
     """Filter criteria for tree items."""
 
     name_pattern: str = ""
+    is_glob_pattern: bool = False  # True if pattern contains glob characters
     file_type: str = ""  # Extension filter (e.g., ".txt", ".xml")
     min_size: Optional[int] = None  # In bytes
     max_size: Optional[int] = None  # In bytes
@@ -55,10 +56,17 @@ class FilterPanel(QWidget):
         layout.setSpacing(6)
         layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        # Name filter
+        # Name filter (supports glob patterns)
         layout.addWidget(QLabel("Name:"))
         self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("Filter by name...")
+        self._name_edit.setPlaceholderText("*.txt or pattern...")
+        self._name_edit.setToolTip(
+            "Filter by name. Supports glob patterns:\n"
+            "  * - matches any characters\n"
+            "  ? - matches single character\n"
+            "  *.txt - all .txt files\n"
+            "  data* - names starting with 'data'"
+        )
         self._name_edit.setMaximumWidth(150)
         layout.addWidget(self._name_edit)
 
@@ -125,8 +133,11 @@ class FilterPanel(QWidget):
         """Get current filter criteria."""
         criteria = FilterCriteria()
 
-        # Name filter
-        criteria.name_pattern = self._name_edit.text().lower()
+        # Name filter - detect glob patterns
+        pattern = self._name_edit.text()
+        criteria.name_pattern = pattern.lower()
+        # Check if pattern contains glob characters
+        criteria.is_glob_pattern = any(c in pattern for c in "*?[]")
 
         # Type filter
         type_key = self._type_combo.currentText()

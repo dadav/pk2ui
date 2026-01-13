@@ -2,10 +2,13 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from pk2api import Pk2AuthenticationError, Pk2File, Pk2Folder, Pk2Stream
+
+# Type alias for progress callback
+ProgressCallback = Callable[[int, int], None]
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +48,7 @@ class ArchiveService(QObject):
         try:
             self._stream = Pk2Stream(path, key, read_only=False)
             self._path = Path(path)
-            file_count = self._count_files()
+            file_count = self.get_file_count()
             logger.info("Archive opened successfully: %d files", file_count)
             self.archive_opened.emit(path)
             return True
@@ -98,16 +101,33 @@ class ArchiveService(QObject):
             self.operation_error.emit("Extract Error", str(e))
             return False
 
-    def extract_folder(self, pk2_path: str, dest_path: str) -> bool:
-        """Extract a folder and all contents to disk."""
+    def extract_folder(
+        self,
+        pk2_path: str,
+        dest_path: str,
+        progress: Optional[ProgressCallback] = None,
+    ) -> bool:
+        """Extract a folder and all contents to disk.
+
+        Uses pk2api 1.1.0's extract_folder with progress callback when available.
+        """
         logger.info("Extracting folder: %s -> %s", pk2_path, dest_path)
-        folder = self.get_folder(pk2_path)
-        if not folder:
-            self.operation_error.emit(
-                "Extract Error", f"Folder not found: {pk2_path}"
-            )
+        if not self._stream:
             return False
         try:
+            # Use pk2api 1.1.0 extract_folder method with progress callback
+            self._stream.extract_folder(pk2_path, dest_path, progress=progress)
+            logger.info("Folder extraction complete: %s", pk2_path)
+            return True
+        except AttributeError:
+            # Fallback to manual extraction if extract_folder not available
+            logger.info("Falling back to manual folder extraction")
+            folder = self.get_folder(pk2_path)
+            if not folder:
+                self.operation_error.emit(
+                    "Extract Error", f"Folder not found: {pk2_path}"
+                )
+                return False
             dest = Path(dest_path)
             dest.mkdir(parents=True, exist_ok=True)
             return self._extract_folder_recursive(folder, dest, pk2_path)
@@ -116,10 +136,31 @@ class ArchiveService(QObject):
             self.operation_error.emit("Extract Error", str(e))
             return False
 
+    def extract_all(
+        self,
+        dest_path: str,
+        progress: Optional[ProgressCallback] = None,
+    ) -> bool:
+        """Extract entire archive to disk.
+
+        Uses pk2api 1.1.0's extract_all with progress callback.
+        """
+        logger.info("Extracting entire archive to: %s", dest_path)
+        if not self._stream:
+            return False
+        try:
+            self._stream.extract_all(dest_path, progress=progress)
+            logger.info("Full archive extraction complete")
+            return True
+        except Exception as e:
+            logger.exception("Extract all failed")
+            self.operation_error.emit("Extract Error", str(e))
+            return False
+
     def _extract_folder_recursive(
         self, folder: Pk2Folder, dest: Path, pk2_path: str
     ) -> bool:
-        """Recursively extract folder contents."""
+        """Recursively extract folder contents (fallback for older pk2api)."""
         # Extract files
         for name, file in folder.files.items():
             file_dest = dest / name
@@ -157,12 +198,24 @@ class ArchiveService(QObject):
     def import_folder(self, disk_path: str, pk2_path: str) -> tuple[int, int]:
         """Import a folder and all contents from disk into the archive.
 
+        Uses pk2api 1.1.0's import_from_disk method when available.
         Returns (imported_count, failed_count).
         """
         logger.info("Importing folder: %s -> %s", disk_path, pk2_path)
         if not self._stream:
             return (0, 0)
         try:
+            # Use pk2api 1.1.0 import_from_disk method
+            self._stream.import_from_disk(disk_path, pk2_path)
+            # Count imported files for feedback
+            folder = self.get_folder(pk2_path)
+            imported = self._count_folder_files(folder) if folder else 1
+            self.archive_modified.emit()
+            logger.info("Folder import complete via import_from_disk")
+            return (imported, 0)
+        except AttributeError:
+            # Fallback to manual import if import_from_disk not available
+            logger.info("Falling back to manual folder import")
             imported, failed = self._import_folder_recursive(Path(disk_path), pk2_path)
             if imported > 0:
                 self.archive_modified.emit()
@@ -173,8 +226,15 @@ class ArchiveService(QObject):
             self.operation_error.emit("Import Folder Error", str(e))
             return (0, 1)
 
+    def _count_folder_files(self, folder: Pk2Folder) -> int:
+        """Count files in a folder recursively."""
+        count = len(folder.files)
+        for subfolder in folder.folders.values():
+            count += self._count_folder_files(subfolder)
+        return count
+
     def _import_folder_recursive(self, disk_path: Path, pk2_path: str) -> tuple[int, int]:
-        """Recursively import folder contents."""
+        """Recursively import folder contents (fallback for older pk2api)."""
         imported = 0
         failed = 0
 
@@ -250,12 +310,42 @@ class ArchiveService(QObject):
             self.operation_error.emit("Delete Error", str(e))
             return False
 
-    def _count_files(self) -> int:
-        """Count total files in archive."""
+    def get_stats(self) -> dict:
+        """Get archive statistics using pk2api 1.1.0 get_stats().
+
+        Returns dict with: files, folders, total_size, disk_used
+        """
         if not self._stream:
-            return 0
-        return len(self._stream._files)
+            return {"files": 0, "folders": 0, "total_size": 0, "disk_used": 0}
+        return self._stream.get_stats()
 
     def get_file_count(self) -> int:
         """Get total file count in archive."""
-        return self._count_files()
+        return self.get_stats().get("files", 0)
+
+    def glob(self, pattern: str) -> list[Pk2File]:
+        """Find files matching a glob pattern.
+
+        Uses pk2api 1.1.0's glob method for pattern matching.
+        Supports patterns like "**/*.txt", "data/*.xml", etc.
+        """
+        if not self._stream:
+            return []
+        try:
+            return self._stream.glob(pattern)
+        except AttributeError:
+            logger.warning("glob() not available in this pk2api version")
+            return []
+
+    def iter_files(self) -> list[Pk2File]:
+        """Iterate over all files in the archive.
+
+        Uses pk2api 1.1.0's iter_files method.
+        """
+        if not self._stream:
+            return []
+        try:
+            return list(self._stream.iter_files())
+        except AttributeError:
+            logger.warning("iter_files() not available in this pk2api version")
+            return []
