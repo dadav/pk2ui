@@ -36,24 +36,25 @@ class ComparisonTreeWidget(QWidget):
     item_selected = pyqtSignal(object)
     items_selected = pyqtSignal(list)
     copy_requested = pyqtSignal(list)
+    restore_requested = pyqtSignal(list)  # For copying REMOVED items from target to source
 
     COLORS = {
-        DiffType.ADDED: QColor("#2d5a2d"),
-        DiffType.REMOVED: QColor("#5a2d2d"),
+        DiffType.ADDED: QColor("#5a2d2d"),    # Red - Only in Source = deleted from target
+        DiffType.REMOVED: QColor("#2d5a2d"),  # Green - Only in Target = added to target
         DiffType.MODIFIED: QColor("#5a5a2d"),
         DiffType.UNCHANGED: None,
     }
 
     ICONS = {
-        DiffType.ADDED: "+",
-        DiffType.REMOVED: "-",
+        DiffType.ADDED: "-",    # Only in Source = deleted from target
+        DiffType.REMOVED: "+",  # Only in Target = added to target
         DiffType.MODIFIED: "~",
         DiffType.UNCHANGED: " ",
     }
 
     STATUS_TEXT = {
-        DiffType.ADDED: "Added",
-        DiffType.REMOVED: "Removed",
+        DiffType.ADDED: "Only in Source",
+        DiffType.REMOVED: "Only in Target",
         DiffType.MODIFIED: "Modified",
         DiffType.UNCHANGED: "Same",
     }
@@ -74,7 +75,7 @@ class ComparisonTreeWidget(QWidget):
         filter_layout.addWidget(QLabel("Filter:"))
         self._filter_combo = QComboBox()
         self._filter_combo.addItems(
-            ["All", "Added", "Removed", "Modified", "Unchanged"]
+            ["All", "Only in Source", "Only in Target", "Modified"]
         )
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         filter_layout.addWidget(self._filter_combo)
@@ -110,11 +111,17 @@ class ComparisonTreeWidget(QWidget):
         # Build path hierarchy
         path_items: dict[str, QTreeWidgetItem] = {}
 
-        for diff_item in self._diff_items:
-            if not self._passes_filter(diff_item):
+        # Filter and sort items by path to ensure consistent parent-child creation
+        filtered_items = [d for d in self._diff_items if self._passes_filter(d)]
+        sorted_items = sorted(filtered_items, key=lambda x: x.path.lower())
+
+        for diff_item in sorted_items:
+            # Normalize path - strip leading/trailing slashes
+            normalized_path = diff_item.path.strip("/")
+            if not normalized_path:
                 continue
 
-            parts = diff_item.path.split("/")
+            parts = normalized_path.split("/")
             current_path = ""
 
             for i, part in enumerate(parts):
@@ -137,7 +144,7 @@ class ComparisonTreeWidget(QWidget):
                 else:
                     self._tree.addTopLevelItem(item)
 
-        self._tree.expandAll()
+        self._tree.collapseAll()
 
     def _create_tree_item(self, diff_item: DiffItem, name: str) -> QTreeWidgetItem:
         """Create tree item for a diff item."""
@@ -184,11 +191,10 @@ class ComparisonTreeWidget(QWidget):
     def _on_filter_changed(self, index: int) -> None:
         """Handle filter dropdown change."""
         filter_map = {
-            0: None,
-            1: DiffType.ADDED,
-            2: DiffType.REMOVED,
+            0: None,              # All
+            1: DiffType.ADDED,    # Only in Source
+            2: DiffType.REMOVED,  # Only in Target
             3: DiffType.MODIFIED,
-            4: DiffType.UNCHANGED,
         }
         self._current_filter = filter_map.get(index)
         self._rebuild_tree()
@@ -229,21 +235,37 @@ class ComparisonTreeWidget(QWidget):
         selected_items = self._tree.selectedItems()
         menu = QMenu(self)
 
+        # Collect items for copy to target (ADDED/MODIFIED)
         copyable_items = []
+        # Collect items for restore to source (REMOVED)
+        restorable_items = []
+
         for sel_item in selected_items:
             data: DiffTreeItemData = sel_item.data(0, Qt.ItemDataRole.UserRole)
-            if data and data.diff_type in (DiffType.ADDED, DiffType.MODIFIED):
-                copyable_items.append((data.path, data.is_folder))
+            if data:
+                if data.diff_type in (DiffType.ADDED, DiffType.MODIFIED):
+                    copyable_items.append((data.path, data.is_folder))
+                elif data.diff_type == DiffType.REMOVED:
+                    restorable_items.append((data.path, data.is_folder))
 
         if copyable_items:
             if len(copyable_items) == 1:
-                copy_action = QAction("Copy to Target", self)
+                copy_action = QAction("Add to Target", self)
             else:
-                copy_action = QAction(f"Copy {len(copyable_items)} items to Target", self)
+                copy_action = QAction(f"Add {len(copyable_items)} items to Target", self)
             copy_action.triggered.connect(lambda: self.copy_requested.emit(copyable_items))
             menu.addAction(copy_action)
-        else:
-            info_action = QAction("(No copyable items selected)", self)
+
+        if restorable_items:
+            if len(restorable_items) == 1:
+                restore_action = QAction("Add to Source", self)
+            else:
+                restore_action = QAction(f"Add {len(restorable_items)} items to Source", self)
+            restore_action.triggered.connect(lambda: self.restore_requested.emit(restorable_items))
+            menu.addAction(restore_action)
+
+        if not copyable_items and not restorable_items:
+            info_action = QAction("(No actionable items selected)", self)
             info_action.setEnabled(False)
             menu.addAction(info_action)
 
@@ -273,6 +295,15 @@ class ComparisonTreeWidget(QWidget):
         for diff_item in self._diff_items:
             if diff_item.diff_type in (DiffType.ADDED, DiffType.MODIFIED):
                 result.append((diff_item.path, diff_item.is_folder))
+        return result
+
+    def get_restorable_items(self) -> list[tuple[str, bool]]:
+        """Get REMOVED items that can be restored from target to source."""
+        result = []
+        for item in self._tree.selectedItems():
+            data: DiffTreeItemData = item.data(0, Qt.ItemDataRole.UserRole)
+            if data and data.diff_type == DiffType.REMOVED:
+                result.append((data.path, data.is_folder))
         return result
 
     def get_summary(self) -> dict[str, int]:

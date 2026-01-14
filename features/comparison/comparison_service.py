@@ -23,10 +23,19 @@ class DiffType(Enum):
 
     @classmethod
     def from_change_type(cls, change_type: ChangeType) -> "DiffType":
-        """Convert pk2api ChangeType to DiffType."""
+        """Convert pk2api ChangeType to DiffType.
+
+        pk2api semantics (comparing source vs target):
+        - ADDED = file exists in target but not in source
+        - REMOVED = file exists in source but not in target
+
+        We map to our DiffType which uses source-centric naming:
+        - ADDED = only in source (pk2api calls this REMOVED)
+        - REMOVED = only in target (pk2api calls this ADDED)
+        """
         mapping = {
-            ChangeType.ADDED: cls.ADDED,
-            ChangeType.REMOVED: cls.REMOVED,
+            ChangeType.ADDED: cls.REMOVED,    # pk2api: in target only → our: "Only in Target"
+            ChangeType.REMOVED: cls.ADDED,    # pk2api: in source only → our: "Only in Source"
             ChangeType.MODIFIED: cls.MODIFIED,
             ChangeType.UNCHANGED: cls.UNCHANGED,
         }
@@ -98,7 +107,7 @@ class ComparisonService(QObject):
 
         try:
             self._source_stream = Pk2Stream(
-                config.source_path, config.source_key, read_only=True
+                config.source_path, config.source_key, read_only=False
             )
         except Exception as e:
             logger.exception("Failed to open source archive: %s", config.source_path)

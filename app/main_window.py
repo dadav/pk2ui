@@ -457,16 +457,19 @@ class MainWindow(QMainWindow):
         failed = 0
 
         for pk2_path, is_folder in items:
-            name = pk2_path.split("/")[-1] if pk2_path else "root"
             if is_folder:
-                folder_dest = str(dest_path / name)
-                if self._archive_service.extract_folder(pk2_path, folder_dest):
+                # Preserve full path hierarchy for folders
+                folder_dest = dest_path / pk2_path if pk2_path else dest_path / "root"
+                folder_dest.parent.mkdir(parents=True, exist_ok=True)
+                if self._archive_service.extract_folder(pk2_path, str(folder_dest)):
                     extracted += 1
                 else:
                     failed += 1
             else:
-                file_dest = str(dest_path / name)
-                if self._archive_service.extract_file(pk2_path, file_dest):
+                # Preserve full path hierarchy for files
+                file_dest = dest_path / pk2_path
+                file_dest.parent.mkdir(parents=True, exist_ok=True)
+                if self._archive_service.extract_file(pk2_path, str(file_dest)):
                     extracted += 1
                 else:
                     failed += 1
