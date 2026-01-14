@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 
 from app.archive_service import ArchiveService
 from app.version import get_version
+from features.comparison.comparison_window import ComparisonWindow
 from features.dialogs.open_archive import NewFolderDialog, OpenArchiveDialog
 from features.file_details.details_panel import DetailsPanel
 from features.text_preview.preview_widget import TextPreviewWidget
@@ -150,6 +151,13 @@ class MainWindow(QMainWindow):
         self._delete_action.setShortcut("Delete")
         self._delete_action.triggered.connect(self._on_delete)
         edit_menu.addAction(self._delete_action)
+
+        # Tools menu
+        tools_menu = menubar.addMenu("&Tools")
+
+        self._compare_action = QAction("&Compare Archives...", self)
+        self._compare_action.triggered.connect(self._on_compare)
+        tools_menu.addAction(self._compare_action)
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -349,6 +357,17 @@ class MainWindow(QMainWindow):
         elif len(selected_items) == 1:
             path, is_folder = selected_items[0]
             self._on_delete_item(path, is_folder)
+
+    def _on_compare(self) -> None:
+        """Open comparison window."""
+        self._comparison_window = ComparisonWindow(self)
+        self._comparison_window.target_modified.connect(self._on_external_modification)
+        self._comparison_window.show()
+
+    def _on_external_modification(self) -> None:
+        """Handle external modification to open archive."""
+        if self._archive_service.is_open:
+            self._archive_service.archive_modified.emit()
 
     def _on_about(self) -> None:
         """Show about dialog."""

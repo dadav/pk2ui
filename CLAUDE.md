@@ -67,6 +67,29 @@ The application uses pk2api 1.1.0 features with graceful fallback for older vers
 - **extract_folder/extract_all with progress**: Used for folder extraction with progress callbacks
 - **import_from_disk**: Used for bulk folder import
 - **glob()**: Available via `ArchiveService.glob()` method for pattern matching
+- **compare_archives()**: Used for archive comparison (see Comparison Feature below)
+- **copy_file_from/copy_folder_from**: Used for copying files between archives
+
+### Archive Comparison Feature
+The `features/comparison/` module provides archive comparison functionality:
+- **ComparisonWindow**: Dedicated window for comparing two archives side-by-side
+- **ComparisonTreeWidget**: Tree view with diff highlighting (colors + icons)
+- **SelectArchivesDialog**: Dialog for selecting source and target archives
+
+**Usage (Tools > Compare Archives...):**
+1. Select source and target PK2 archives
+2. View differences with visual indicators (green=added, red=removed, yellow=modified)
+3. Copy files from source to target via context menu or toolbar
+
+**pk2api comparison module usage:**
+```python
+from pk2api import compare_archives, ChangeType, ComparisonResult
+
+result = compare_archives(source_stream, target_stream, compute_hashes=True)
+for change in result.file_changes:
+    if change.change_type == ChangeType.MODIFIED:
+        target_stream.copy_file_from(source_stream, change.path)
+```
 
 ### Filter Panel
 The name filter supports glob patterns (`*.txt`, `data*`, `??.xml`). The filter system uses Python's `fnmatch` module for pattern matching when glob characters are detected.
