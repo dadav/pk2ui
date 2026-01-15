@@ -207,9 +207,8 @@ class ArchiveService(QObject):
         try:
             # Use pk2api 1.1.0 import_from_disk method
             self._stream.import_from_disk(disk_path, pk2_path)
-            # Count imported files for feedback
-            folder = self.get_folder(pk2_path)
-            imported = self._count_folder_files(folder) if folder else 1
+            # Count imported files from disk source
+            imported = self._count_disk_files(Path(disk_path))
             self.archive_modified.emit()
             logger.info("Folder import complete via import_from_disk")
             return (imported, 0)
@@ -231,6 +230,16 @@ class ArchiveService(QObject):
         count = len(folder.files)
         for subfolder in folder.folders.values():
             count += self._count_folder_files(subfolder)
+        return count
+
+    def _count_disk_files(self, path: Path) -> int:
+        """Count files in a disk folder recursively."""
+        count = 0
+        for item in path.iterdir():
+            if item.is_file():
+                count += 1
+            elif item.is_dir():
+                count += self._count_disk_files(item)
         return count
 
     def _import_folder_recursive(self, disk_path: Path, pk2_path: str) -> tuple[int, int]:
