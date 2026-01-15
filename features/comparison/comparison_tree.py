@@ -75,7 +75,7 @@ class ComparisonTreeWidget(QWidget):
         filter_layout.addWidget(QLabel("Filter:"))
         self._filter_combo = QComboBox()
         self._filter_combo.addItems(
-            ["All", "Only in Source", "Only in Target", "Modified"]
+            ["All", "Only in Source", "Only in Target", "Modified", "Unchanged"]
         )
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         filter_layout.addWidget(self._filter_combo)
@@ -195,6 +195,7 @@ class ComparisonTreeWidget(QWidget):
             1: DiffType.ADDED,    # Only in Source
             2: DiffType.REMOVED,  # Only in Target
             3: DiffType.MODIFIED,
+            4: DiffType.UNCHANGED,
         }
         self._current_filter = filter_map.get(index)
         self._rebuild_tree()

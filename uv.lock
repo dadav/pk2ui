@@ -43,11 +43,10 @@ wheels = [
 
 [[package]]
 name = "pk2api"
-version = "1.2.0"
+version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/81/d3/78dae756f2fe072acda05f0ccb5012b1c2f6e2302876ffdfe20c210858c5/pk2api-1.2.0.tar.gz", hash = "sha256:4529f049440ce41cea69eaad4f557c489df7eae15b7fac2733d0b22ed93395c3", size = 26644, upload-time = "2026-01-14T16:47:33.875Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/ca/cbaa3a8fe666cc2f7719cdb6166216792985784d73c82bb6f8b3857bb78a/pk2api-1.2.0-py3-none-any.whl", hash = "sha256:52a02c4b4a4e4b455f15b271eb08076ef4f82744e090972a0d79fd5583aa0222", size = 27831, upload-time = "2026-01-14T16:47:32.85Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/c3/cb2d6124f19ca7c288dc327f8dbd9a3f094bb54fa2f70557f9f7a703acbf/pk2api-1.3.0-py3-none-any.whl", hash = "sha256:4dbfef30791668312004144b7537ace151115c05b44ad7a2fca7052630333b13", size = 27861, upload-time = "2026-01-15T09:06:30.835Z" },
 ]
 
 [[package]]

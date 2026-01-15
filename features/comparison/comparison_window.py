@@ -271,16 +271,19 @@ class ComparisonWindow(QMainWindow):
         summary = self._tree_widget.get_summary()
         total_changes = summary['added'] + summary['removed'] + summary['modified']
 
-        if total_changes == 0:
-            self._summary_label.setText("Archives are identical (no differences found)")
+        parts = []
+        if summary['added'] > 0:
+            parts.append(f"{summary['added']} only in source")
+        if summary['removed'] > 0:
+            parts.append(f"{summary['removed']} only in target")
+        if summary['modified'] > 0:
+            parts.append(f"{summary['modified']} modified")
+        if summary['unchanged'] > 0:
+            parts.append(f"{summary['unchanged']} unchanged")
+
+        if not parts:
+            self._summary_label.setText("Archives are empty")
         else:
-            parts = []
-            if summary['added'] > 0:
-                parts.append(f"{summary['added']} only in source")
-            if summary['removed'] > 0:
-                parts.append(f"{summary['removed']} only in target")
-            if summary['modified'] > 0:
-                parts.append(f"{summary['modified']} modified")
             self._summary_label.setText(", ".join(parts))
 
         self._statusbar.showMessage(

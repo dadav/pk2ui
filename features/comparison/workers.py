@@ -60,6 +60,7 @@ class CompareWorker(QThread):
                 self._source_stream,
                 self._target_stream,
                 compute_hashes=self._config.compute_hashes,
+                include_unchanged=True,
             )
 
             logger.info(

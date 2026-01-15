@@ -60,8 +60,8 @@ MainWindow connects these signals to handler methods that coordinate between com
 - pk2api <= 2 (uses 1.1.0 features when available)
 - pyinstaller >= 6.17.0 (dev only)
 
-## pk2api 1.1.0 Feature Usage
-The application uses pk2api 1.1.0 features with graceful fallback for older versions:
+## pk2api Feature Usage
+The application uses pk2api 1.1.0+ features with graceful fallback for older versions:
 - **get_stats()**: Used for archive statistics (file count, folder count, sizes) instead of private attribute access
 - **original_name/get_original_path()**: Used for case-accurate display in tree and details panel
 - **extract_folder/extract_all with progress**: Used for folder extraction with progress callbacks
@@ -69,6 +69,7 @@ The application uses pk2api 1.1.0 features with graceful fallback for older vers
 - **glob()**: Available via `ArchiveService.glob()` method for pattern matching
 - **compare_archives()**: Used for archive comparison (see Comparison Feature below)
 - **copy_file_from/copy_folder_from**: Used for copying files between archives
+- **include_unchanged** (v1.3.0): Used in compare_archives() to show unchanged files in comparison view
 
 ### Archive Comparison Feature
 The `features/comparison/` module provides archive comparison functionality:
@@ -78,14 +79,15 @@ The `features/comparison/` module provides archive comparison functionality:
 
 **Usage (Tools > Compare Archives...):**
 1. Select source and target PK2 archives
-2. View differences with visual indicators (green=added, red=removed, yellow=modified)
-3. Copy files from source to target via context menu or toolbar
+2. View differences with visual indicators (green=added, red=removed, yellow=modified, no color=unchanged)
+3. Filter by change type (All, Only in Source, Only in Target, Modified, Unchanged)
+4. Copy files from source to target via context menu or toolbar
 
 **pk2api comparison module usage:**
 ```python
 from pk2api import compare_archives, ChangeType, ComparisonResult
 
-result = compare_archives(source_stream, target_stream, compute_hashes=True)
+result = compare_archives(source_stream, target_stream, compute_hashes=True, include_unchanged=True)
 for change in result.file_changes:
     if change.change_type == ChangeType.MODIFIED:
         target_stream.copy_file_from(source_stream, change.path)
