@@ -41,12 +41,23 @@ class ArchiveService(QObject):
             return self._stream.get_folder("")
         return None
 
-    def open_archive(self, path: str, key: str = "169841") -> bool:
-        """Open a PK2 archive. Returns True on success."""
+    def open_archive(
+        self,
+        path: str,
+        key: str = "169841",
+        progress: Optional[ProgressCallback] = None,
+    ) -> bool:
+        """Open a PK2 archive. Returns True on success.
+
+        Args:
+            path: Path to the PK2 file
+            key: Blowfish encryption key
+            progress: Optional callback(blocks_loaded, estimated_total) for progress
+        """
         logger.info("Opening archive: %s", path)
         self.close_archive()
         try:
-            self._stream = Pk2Stream(path, key, read_only=False)
+            self._stream = Pk2Stream(path, key, read_only=False, progress=progress)
             self._path = Path(path)
             file_count = self.get_file_count()
             logger.info("Archive opened successfully: %d files", file_count)

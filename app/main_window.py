@@ -1,6 +1,7 @@
 """Main window for PK2 Archive Editor."""
 
 import logging
+import time
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, Qt, pyqtSignal
@@ -33,15 +34,25 @@ class OpenArchiveWorker(QThread):
     """Worker thread for opening archives without blocking UI."""
 
     finished = pyqtSignal(bool)  # success status
+    progress = pyqtSignal(int, int, float)  # current, total, elapsed_seconds
 
     def __init__(self, archive_service: "ArchiveService", path: str, key: str) -> None:
         super().__init__()
         self._archive_service = archive_service
         self._path = path
         self._key = key
+        self._start_time = 0.0
 
     def run(self) -> None:
-        success = self._archive_service.open_archive(self._path, self._key)
+        self._start_time = time.time()
+
+        def on_progress(current: int, total: int) -> None:
+            elapsed = time.time() - self._start_time
+            self.progress.emit(current, total, elapsed)
+
+        success = self._archive_service.open_archive(
+            self._path, self._key, progress=on_progress
+        )
         self.finished.emit(success)
 
 
@@ -285,16 +296,27 @@ class MainWindow(QMainWindow):
 
     def _open_archive_async(self, path: str, key: str) -> None:
         """Open archive in background thread with progress dialog."""
+        # Use indeterminate progress (0,0) since we can't accurately estimate total blocks
         self._progress = QProgressDialog("Opening archive...", None, 0, 0, self)
-        self._progress.setWindowTitle("Please Wait")
+        self._progress.setWindowTitle("Opening Archive")
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress.setCancelButton(None)
         self._progress.setMinimumDuration(0)
         self._progress.show()
 
         self._open_worker = OpenArchiveWorker(self._archive_service, path, key)
+        self._open_worker.progress.connect(self._on_open_progress)
         self._open_worker.finished.connect(self._on_open_worker_finished)
         self._open_worker.start()
+
+    def _on_open_progress(self, current: int, total: int, elapsed: float) -> None:
+        """Handle archive open progress update."""
+        # Show blocks loaded and elapsed time
+        if elapsed < 60:
+            time_text = f"{elapsed:.1f}s"
+        else:
+            time_text = f"{elapsed / 60:.1f}m"
+        self._progress.setLabelText(f"Opening archive... ({current} blocks, {time_text})")
 
     def _on_open_worker_finished(self, success: bool) -> None:
         """Handle archive open worker completion."""

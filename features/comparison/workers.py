@@ -1,6 +1,7 @@
 """Background worker threads for comparison and copy operations."""
 
 import logging
+import time
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from pk2api import Pk2Stream, compare_archives, ComparisonResult
@@ -15,6 +16,7 @@ class CompareWorker(QThread):
 
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
+    progress = pyqtSignal(str, int, int, float)  # stage, current, total, elapsed
 
     def __init__(
         self,
@@ -25,6 +27,7 @@ class CompareWorker(QThread):
         self._config = config
         self._source_stream: Pk2Stream | None = None
         self._target_stream: Pk2Stream | None = None
+        self._start_time = 0.0
 
     @property
     def source_stream(self) -> Pk2Stream | None:
@@ -37,30 +40,48 @@ class CompareWorker(QThread):
     def run(self) -> None:
         """Execute comparison in background thread."""
         try:
+            self._start_time = time.time()
+
             logger.info(
                 "CompareWorker: opening %s and %s",
                 self._config.source_path,
                 self._config.target_path,
             )
 
+            # Stage 1: Open source archive
+            self.progress.emit("Opening source archive...", 0, 100, 0.0)
             self._source_stream = Pk2Stream(
                 self._config.source_path,
                 self._config.source_key,
                 read_only=True,
+                progress=lambda c, t: self.progress.emit(
+                    "Opening source archive...", c, t, time.time() - self._start_time
+                ),
             )
 
+            # Stage 2: Open target archive
+            stage2_start = time.time()
+            self.progress.emit("Opening target archive...", 0, 100, time.time() - self._start_time)
             self._target_stream = Pk2Stream(
                 self._config.target_path,
                 self._config.target_key,
                 read_only=False,
+                progress=lambda c, t: self.progress.emit(
+                    "Opening target archive...", c, t, time.time() - self._start_time
+                ),
             )
 
+            # Stage 3: Run comparison
             logger.info("CompareWorker: running comparison")
+            self.progress.emit("Comparing archives...", 0, 100, time.time() - self._start_time)
             result = compare_archives(
                 self._source_stream,
                 self._target_stream,
                 compute_hashes=self._config.compute_hashes,
                 include_unchanged=True,
+                progress=lambda path, c, t: self.progress.emit(
+                    f"Comparing: {path}", c, t, time.time() - self._start_time
+                ),
             )
 
             logger.info(

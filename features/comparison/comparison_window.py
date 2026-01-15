@@ -222,17 +222,37 @@ class ComparisonWindow(QMainWindow):
 
     def _run_comparison(self, config: ComparisonConfig) -> None:
         """Run comparison in background thread."""
+        # Use indeterminate progress since block count estimation is inaccurate
         self._progress = QProgressDialog("Comparing archives...", None, 0, 0, self)
-        self._progress.setWindowTitle("Please Wait")
+        self._progress.setWindowTitle("Comparing Archives")
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress.setCancelButton(None)
         self._progress.setMinimumDuration(0)
         self._progress.show()
 
         self._compare_worker = CompareWorker(config, self)
+        self._compare_worker.progress.connect(self._on_compare_progress)
         self._compare_worker.finished.connect(self._on_compare_finished)
         self._compare_worker.error.connect(self._on_compare_error)
         self._compare_worker.start()
+
+    def _on_compare_progress(
+        self, stage: str, current: int, total: int, elapsed: float
+    ) -> None:
+        """Handle comparison progress update."""
+        # Format elapsed time
+        if elapsed < 60:
+            time_text = f"{elapsed:.1f}s"
+        else:
+            time_text = f"{elapsed / 60:.1f}m"
+
+        # For comparison stage (has accurate total), show progress
+        if stage.startswith("Comparing:") and total > 0:
+            self._progress.setLabelText(f"{stage} ({current}/{total}, {time_text})")
+        elif current > 0:
+            self._progress.setLabelText(f"{stage} ({current} blocks, {time_text})")
+        else:
+            self._progress.setLabelText(stage)
 
     def _on_compare_finished(self, result: ComparisonResult) -> None:
         """Handle comparison completion."""
