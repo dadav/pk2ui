@@ -119,3 +119,8 @@ Offset  Size  Content
 ## Known Issues
 See `issues.md` for tracked bugs:
 - UI blocks during PK2 file open operations (needs progress indicator)
+
+## Platform Notes
+
+### Qt6 on Wayland
+Tree widget branch indicators (expand arrows) can be clipped at deeper nesting levels with the default indentation. Use `setIndentation(12)` or similar reduced value to prevent this. The comparison tree widget uses this workaround.

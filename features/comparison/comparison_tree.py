@@ -91,6 +91,8 @@ class ComparisonTreeWidget(QWidget):
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._show_context_menu)
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
+        # Reduce indentation to prevent branch indicators from being clipped on Wayland
+        self._tree.setIndentation(12)
         self._tree.setColumnWidth(0, 30)
         self._tree.setColumnWidth(1, 300)
         self._tree.setColumnWidth(2, 100)
@@ -152,7 +154,25 @@ class ComparisonTreeWidget(QWidget):
                 else:
                     self._tree.addTopLevelItem(item)
 
+        # Ensure all folder items show expand indicator (must be done after tree is built)
+        self._ensure_folder_indicators(self._tree.invisibleRootItem())
+        # Expand all then collapse to force Qt to recognize expandable items
+        self._tree.expandAll()
         self._tree.collapseAll()
+
+    def _ensure_folder_indicators(self, parent: QTreeWidgetItem) -> None:
+        """Recursively ensure all items with children have expand indicators."""
+        for i in range(parent.childCount()):
+            child = parent.child(i)
+            self._ensure_folder_indicators(child)
+            # Set indicator for any item that has children or is marked as folder
+            has_children = child.childCount() > 0
+            data = child.data(0, Qt.ItemDataRole.UserRole)
+            is_folder = data and data.is_folder
+            if has_children or is_folder:
+                child.setChildIndicatorPolicy(
+                    QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator
+                )
 
     def _create_tree_item(self, diff_item: DiffItem, name: str) -> QTreeWidgetItem:
         """Create tree item for a diff item."""
@@ -169,6 +189,10 @@ class ComparisonTreeWidget(QWidget):
         if color:
             for col in range(5):
                 item.setBackground(col, QBrush(color))
+
+        # Show expand arrow for folders that may have children
+        if diff_item.is_folder:
+            item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
 
         return item
 
