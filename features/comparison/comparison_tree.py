@@ -1,5 +1,6 @@
 """Tree widget for displaying archive comparison results with diff highlighting."""
 
+import fnmatch
 import logging
 from typing import Optional
 
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .comparison_service import DiffItem, DiffType
+from features.tree_browser.filter_panel import FilterCriteria
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,7 @@ class ComparisonTreeWidget(QWidget):
         super().__init__()
         self._diff_items: list[DiffItem] = []
         self._current_filter: Optional[DiffType] = None
+        self._content_filter: Optional[FilterCriteria] = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -102,6 +105,11 @@ class ComparisonTreeWidget(QWidget):
         """Populate tree with diff items."""
         logger.info("Populating comparison tree with %d items", len(diff_items))
         self._diff_items = diff_items
+        self._rebuild_tree()
+
+    def apply_content_filter(self, criteria: FilterCriteria) -> None:
+        """Apply content filter criteria and rebuild tree."""
+        self._content_filter = criteria
         self._rebuild_tree()
 
     def _rebuild_tree(self) -> None:
@@ -169,6 +177,7 @@ class ComparisonTreeWidget(QWidget):
         item = QTreeWidgetItem([" ", name, "", "", "Folder"])
         data = DiffTreeItemData(path, True, DiffType.UNCHANGED)
         item.setData(0, Qt.ItemDataRole.UserRole, data)
+        item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
         return item
 
     def _format_size(self, size: Optional[int]) -> str:
@@ -183,10 +192,78 @@ class ComparisonTreeWidget(QWidget):
             return f"{size / (1024 * 1024):.1f} MB"
 
     def _passes_filter(self, diff_item: DiffItem) -> bool:
-        """Check if item passes current filter."""
-        if self._current_filter is None:
+        """Check if item passes current diff-type and content filters."""
+        # Check diff-type filter
+        if self._current_filter is not None:
+            if diff_item.diff_type != self._current_filter:
+                return False
+
+        # Check content filter
+        if self._content_filter:
+            if not self._passes_content_filter(diff_item):
+                return False
+
+        return True
+
+    def _passes_content_filter(self, diff_item: DiffItem) -> bool:
+        """Check if item passes content filter (name, type, size)."""
+        f = self._content_filter
+        if not f:
             return True
-        return diff_item.diff_type == self._current_filter
+
+        name = diff_item.path.split("/")[-1] if "/" in diff_item.path else diff_item.path
+
+        # Handle folders
+        if diff_item.is_folder:
+            if not f.show_folders:
+                return False
+            # Folders pass name filter if name matches
+            if f.name_pattern:
+                name_lower = name.lower()
+                if f.is_glob_pattern:
+                    if not fnmatch.fnmatch(name_lower, f.name_pattern):
+                        return False
+                else:
+                    if f.name_pattern not in name_lower:
+                        return False
+            return True
+
+        # Handle files
+        if not f.show_files:
+            return False
+
+        # Name filter
+        if f.name_pattern:
+            name_lower = name.lower()
+            if f.is_glob_pattern:
+                if not fnmatch.fnmatch(name_lower, f.name_pattern):
+                    return False
+            else:
+                if f.name_pattern not in name_lower:
+                    return False
+
+        # Type filter (extension)
+        if f.file_type:
+            ext = self._get_extension(name)
+            allowed_exts = [e.strip() for e in f.file_type.split(",")]
+            if ext not in allowed_exts:
+                return False
+
+        # Size filter - use source_size or target_size depending on availability
+        size = diff_item.source_size or diff_item.target_size
+        if size is not None:
+            if f.min_size is not None and size < f.min_size:
+                return False
+            if f.max_size is not None and size > f.max_size:
+                return False
+
+        return True
+
+    def _get_extension(self, name: str) -> str:
+        """Get file extension with leading dot, lowercase."""
+        if "." in name:
+            return "." + name.rsplit(".", 1)[1].lower()
+        return ""
 
     def _on_filter_changed(self, index: int) -> None:
         """Handle filter dropdown change."""

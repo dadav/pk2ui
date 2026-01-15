@@ -26,6 +26,7 @@ from .comparison_tree import ComparisonTreeWidget
 from .select_archives_dialog import SelectArchivesDialog
 from .workers import CompareWorker, CopyWorker
 from features.text_preview.preview_widget import TextPreviewWidget
+from features.tree_browser.filter_panel import FilterPanel
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class ComparisonWindow(QMainWindow):
         self._result: Optional[ComparisonResult] = None
         self._diff_items: list[DiffItem] = []
         self._config: Optional[ComparisonConfig] = None
+        self._last_splitter_sizes: list[int] = [600, 400]
 
         self._setup_menu()
         self._setup_toolbar()
@@ -108,6 +110,14 @@ class ComparisonWindow(QMainWindow):
         self._refresh_btn.triggered.connect(self._on_refresh)
         toolbar.addAction(self._refresh_btn)
 
+        toolbar.addSeparator()
+
+        self._toggle_preview_action = QAction("Toggle Preview", self)
+        self._toggle_preview_action.setCheckable(True)
+        self._toggle_preview_action.setChecked(True)
+        self._toggle_preview_action.triggered.connect(self._on_toggle_preview)
+        toolbar.addAction(self._toggle_preview_action)
+
     def _setup_central_widget(self) -> None:
         """Setup central widget."""
         central = QWidget()
@@ -138,23 +148,29 @@ class ComparisonWindow(QMainWindow):
         self._summary_label.setStyleSheet("font-weight: bold; padding: 4px;")
         layout.addWidget(self._summary_label)
 
+        # Filter panel
+        self._filter_panel = FilterPanel()
+        self._filter_panel.setFixedHeight(30)
+        layout.addWidget(self._filter_panel)
+
         # Splitter for tree and preview
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        self._splitter = QSplitter(Qt.Orientation.Vertical)
 
         # Comparison tree
         self._tree_widget = ComparisonTreeWidget()
         self._tree_widget.item_selected.connect(self._on_item_selected)
         self._tree_widget.copy_requested.connect(self._on_copy_items)
         self._tree_widget.restore_requested.connect(self._on_restore_items)
-        splitter.addWidget(self._tree_widget)
+        self._filter_panel.filters_changed.connect(self._tree_widget.apply_content_filter)
+        self._splitter.addWidget(self._tree_widget)
 
         # Preview widget
         self._preview_widget = TextPreviewWidget()
-        splitter.addWidget(self._preview_widget)
+        self._splitter.addWidget(self._preview_widget)
 
         # Set initial splitter sizes (60% tree, 40% preview)
-        splitter.setSizes([600, 400])
-        layout.addWidget(splitter, 1)
+        self._splitter.setSizes([600, 400])
+        layout.addWidget(self._splitter, 1)
 
         # Details panel
         details_group = QGroupBox("Details")
@@ -187,6 +203,15 @@ class ComparisonWindow(QMainWindow):
         self._copy_btn.setEnabled(has_result and has_copyable)
         self._restore_selected_action.setEnabled(has_result and has_restorable)
         self._refresh_btn.setEnabled(has_result)
+
+    def _on_toggle_preview(self, checked: bool) -> None:
+        """Toggle preview panel visibility."""
+        if checked:
+            self._preview_widget.show()
+            self._splitter.setSizes(self._last_splitter_sizes)
+        else:
+            self._last_splitter_sizes = self._splitter.sizes()
+            self._preview_widget.hide()
 
     def _on_compare(self) -> None:
         """Handle compare action - show dialog and run comparison."""
@@ -380,6 +405,9 @@ class ComparisonWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Archives not loaded")
             return
 
+        # Store items for update after copy
+        self._pending_copy_items = items
+
         self._copy_progress = QProgressDialog(
             "Adding files...", "Cancel", 0, len(items), self
         )
@@ -419,7 +447,8 @@ class ComparisonWindow(QMainWindow):
             )
 
         self.target_modified.emit()
-        self._on_refresh()
+        self._update_after_copy(self._pending_copy_items, to_target=True)
+        self._pending_copy_items = []
 
     def _on_restore_selected(self) -> None:
         """Restore selected items to source."""
@@ -432,6 +461,9 @@ class ComparisonWindow(QMainWindow):
         if not self._source_stream or not self._target_stream:
             QMessageBox.warning(self, "Error", "Archives not loaded")
             return
+
+        # Store items for update after restore
+        self._pending_restore_items = items
 
         self._restore_progress = QProgressDialog(
             "Adding files...", "Cancel", 0, len(items), self
@@ -473,7 +505,59 @@ class ComparisonWindow(QMainWindow):
             )
 
         self.source_modified.emit()
-        self._on_refresh()
+        self._update_after_copy(self._pending_restore_items, to_target=False)
+        self._pending_restore_items = []
+
+    def _update_after_copy(self, items: list[tuple[str, bool]], to_target: bool) -> None:
+        """Update diff items after copy without re-comparing.
+
+        Args:
+            items: List of (path, is_folder) tuples that were copied
+            to_target: True if copied to target, False if copied to source
+        """
+        copied_paths = {path for path, _ in items}
+
+        for diff_item in self._diff_items:
+            if diff_item.path not in copied_paths:
+                continue
+
+            if to_target:
+                # Copied from source to target
+                # ADDED (only in source) -> UNCHANGED (now in both)
+                # MODIFIED -> UNCHANGED (now same in both)
+                if diff_item.diff_type in (DiffType.ADDED, DiffType.MODIFIED):
+                    diff_item.diff_type = DiffType.UNCHANGED
+                    # Target now has same content as source
+                    diff_item.target_size = diff_item.source_size
+            else:
+                # Copied from target to source (restore)
+                # REMOVED (only in target) -> UNCHANGED (now in both)
+                if diff_item.diff_type == DiffType.REMOVED:
+                    diff_item.diff_type = DiffType.UNCHANGED
+                    # Source now has same content as target
+                    diff_item.source_size = diff_item.target_size
+
+        # Rebuild tree with updated items
+        self._tree_widget.populate(self._diff_items)
+
+        # Update summary
+        summary = self._tree_widget.get_summary()
+        parts = []
+        if summary['added'] > 0:
+            parts.append(f"{summary['added']} only in source")
+        if summary['removed'] > 0:
+            parts.append(f"{summary['removed']} only in target")
+        if summary['modified'] > 0:
+            parts.append(f"{summary['modified']} modified")
+        if summary['unchanged'] > 0:
+            parts.append(f"{summary['unchanged']} unchanged")
+
+        if not parts:
+            self._summary_label.setText("Archives are identical")
+        else:
+            self._summary_label.setText(", ".join(parts))
+
+        self._update_ui_state()
 
     def _on_refresh(self) -> None:
         """Refresh comparison."""

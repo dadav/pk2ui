@@ -1,0 +1,4 @@
+- After copying a file to the target, the archives are compared again. This takes a lot of time and should not be necessary.
+- The preview in the comparison window should be hideable by button.
+- Some directories in the list of the comparison window don't have an arrow if I go deeper in the hierarchy. It should work like in the main window.
+- The preview window should also have filters like in the main window.
