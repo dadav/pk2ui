@@ -52,7 +52,7 @@ wheels = [
 
 [[package]]
 name = "pk2ui"
-version = "0.7.0"
+version = "0.7.1"
 source = { virtual = "." }
 dependencies = [
     { name = "pk2api" },
