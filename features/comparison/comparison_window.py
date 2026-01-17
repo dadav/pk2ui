@@ -1,6 +1,7 @@
 """Main window for archive comparison."""
 
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -161,7 +162,9 @@ class ComparisonWindow(QMainWindow):
         self._tree_widget.item_selected.connect(self._on_item_selected)
         self._tree_widget.copy_requested.connect(self._on_copy_items)
         self._tree_widget.restore_requested.connect(self._on_restore_items)
-        self._filter_panel.filters_changed.connect(self._tree_widget.apply_content_filter)
+        self._filter_panel.filters_changed.connect(
+            self._tree_widget.apply_content_filter
+        )
         self._splitter.addWidget(self._tree_widget)
 
         # Preview widget
@@ -230,6 +233,10 @@ class ComparisonWindow(QMainWindow):
         self._progress.setMinimumDuration(0)
         self._progress.show()
 
+        # Throttle progress updates to avoid UI flickering
+        self._last_progress_update = 0.0
+        self._progress_throttle_ms = 250  # Update at most every 50ms
+
         self._compare_worker = CompareWorker(config, self)
         self._compare_worker.progress.connect(self._on_compare_progress)
         self._compare_worker.finished.connect(self._on_compare_finished)
@@ -239,7 +246,17 @@ class ComparisonWindow(QMainWindow):
     def _on_compare_progress(
         self, stage: str, current: int, total: int, elapsed: float
     ) -> None:
-        """Handle comparison progress update."""
+        """Handle comparison progress update with throttling."""
+        now = time.time() * 1000  # Current time in ms
+
+        # Throttle updates for rapid file comparisons
+        # Always update for stage changes (non-Comparing stages)
+        is_file_comparison = stage.startswith("Comparing:")
+        if is_file_comparison:
+            if now - self._last_progress_update < self._progress_throttle_ms:
+                return
+        self._last_progress_update = now
+
         # Format elapsed time
         if elapsed < 60:
             time_text = f"{elapsed:.1f}s"
@@ -247,7 +264,7 @@ class ComparisonWindow(QMainWindow):
             time_text = f"{elapsed / 60:.1f}m"
 
         # For comparison stage (has accurate total), show progress
-        if stage.startswith("Comparing:") and total > 0:
+        if is_file_comparison and total > 0:
             self._progress.setLabelText(f"{stage} ({current}/{total}, {time_text})")
         elif current > 0:
             self._progress.setLabelText(f"{stage} ({current} blocks, {time_text})")
@@ -308,22 +325,26 @@ class ComparisonWindow(QMainWindow):
 
         self._tree_widget.populate(self._diff_items)
 
-        source_path = str(Path(self._config.source_path).resolve()) if self._config else "-"
-        target_path = str(Path(self._config.target_path).resolve()) if self._config else "-"
+        source_path = (
+            str(Path(self._config.source_path).resolve()) if self._config else "-"
+        )
+        target_path = (
+            str(Path(self._config.target_path).resolve()) if self._config else "-"
+        )
         self._source_label.setText(source_path)
         self._target_label.setText(target_path)
 
         summary = self._tree_widget.get_summary()
-        total_changes = summary['added'] + summary['removed'] + summary['modified']
+        total_changes = summary["added"] + summary["removed"] + summary["modified"]
 
         parts = []
-        if summary['added'] > 0:
+        if summary["added"] > 0:
             parts.append(f"{summary['added']} only in source")
-        if summary['removed'] > 0:
+        if summary["removed"] > 0:
             parts.append(f"{summary['removed']} only in target")
-        if summary['modified'] > 0:
+        if summary["modified"] > 0:
             parts.append(f"{summary['modified']} modified")
-        if summary['unchanged'] > 0:
+        if summary["unchanged"] > 0:
             parts.append(f"{summary['unchanged']} unchanged")
 
         if not parts:
@@ -347,7 +368,11 @@ class ComparisonWindow(QMainWindow):
 
         if not item.is_folder:
             # For "Only in Source" items, ensure we have source size
-            if source_size is None and item.diff_type == DiffType.ADDED and self._source_stream:
+            if (
+                source_size is None
+                and item.diff_type == DiffType.ADDED
+                and self._source_stream
+            ):
                 try:
                     file = self._source_stream.get_file(item.path)
                     if file:
@@ -356,7 +381,11 @@ class ComparisonWindow(QMainWindow):
                     pass
 
             # For "Only in Target" items, ensure we have target size
-            if target_size is None and item.diff_type == DiffType.REMOVED and self._target_stream:
+            if (
+                target_size is None
+                and item.diff_type == DiffType.REMOVED
+                and self._target_stream
+            ):
                 try:
                     file = self._target_stream.get_file(item.path)
                     if file:
@@ -395,7 +424,7 @@ class ComparisonWindow(QMainWindow):
                 self._preview_widget.preview_file(file)
             else:
                 self._preview_widget.clear_preview()
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to preview file: %s", item.path)
             self._preview_widget.clear_preview()
 
@@ -528,7 +557,9 @@ class ComparisonWindow(QMainWindow):
         self._update_after_copy(self._pending_restore_items, to_target=False)
         self._pending_restore_items = []
 
-    def _update_after_copy(self, items: list[tuple[str, bool]], to_target: bool) -> None:
+    def _update_after_copy(
+        self, items: list[tuple[str, bool]], to_target: bool
+    ) -> None:
         """Update diff items after copy without re-comparing.
 
         Args:
@@ -563,13 +594,13 @@ class ComparisonWindow(QMainWindow):
         # Update summary
         summary = self._tree_widget.get_summary()
         parts = []
-        if summary['added'] > 0:
+        if summary["added"] > 0:
             parts.append(f"{summary['added']} only in source")
-        if summary['removed'] > 0:
+        if summary["removed"] > 0:
             parts.append(f"{summary['removed']} only in target")
-        if summary['modified'] > 0:
+        if summary["modified"] > 0:
             parts.append(f"{summary['modified']} modified")
-        if summary['unchanged'] > 0:
+        if summary["unchanged"] > 0:
             parts.append(f"{summary['unchanged']} unchanged")
 
         if not parts:
