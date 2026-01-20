@@ -41,9 +41,9 @@ class ComparisonTreeWidget(QWidget):
     restore_requested = pyqtSignal(list)  # For copying REMOVED items from target to source
 
     COLORS = {
-        DiffType.ADDED: QColor("#5a2d2d"),    # Red - Only in Source = deleted from target
-        DiffType.REMOVED: QColor("#2d5a2d"),  # Green - Only in Target = added to target
-        DiffType.MODIFIED: QColor("#5a5a2d"),
+        DiffType.ADDED: QColor("#ffcccc"),    # Light red - Only in Source = deleted from target
+        DiffType.REMOVED: QColor("#ccffcc"),  # Light green - Only in Target = added to target
+        DiffType.MODIFIED: QColor("#fff4cc"),  # Light yellow - Modified
         DiffType.UNCHANGED: None,
     }
 
