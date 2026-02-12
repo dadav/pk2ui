@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.archive_service import ArchiveService
+from app.archive_service import ArchiveOperationCanceled, ArchiveService
 from app.version import get_version
 from features.comparison.comparison_window import ComparisonWindow
 from features.dialogs.open_archive import NewFolderDialog, OpenArchiveDialog
@@ -74,18 +74,108 @@ class ExtractWorker(QThread):
         self._pk2_path = pk2_path
         self._dest_path = dest_path
         self._extract_all = extract_all
+        self._cancel_requested = False
+        self._was_canceled = False
+
+    def request_cancel(self) -> None:
+        """Request cancellation of the extraction."""
+        self._cancel_requested = True
+
+    @property
+    def was_canceled(self) -> bool:
+        return self._was_canceled
 
     def run(self) -> None:
         def on_progress(current: int, total: int) -> None:
             self.progress.emit(current, total)
 
-        if self._extract_all:
-            success = self._archive_service.extract_all(self._dest_path, progress=on_progress)
-        else:
-            success = self._archive_service.extract_folder(
-                self._pk2_path, self._dest_path, progress=on_progress
-            )
+        def is_canceled() -> bool:
+            return self._cancel_requested
+
+        try:
+            if self._extract_all:
+                success = self._archive_service.extract_all(
+                    self._dest_path, progress=on_progress, cancel=is_canceled
+                )
+            else:
+                success = self._archive_service.extract_folder(
+                    self._pk2_path,
+                    self._dest_path,
+                    progress=on_progress,
+                    cancel=is_canceled,
+                )
+        except ArchiveOperationCanceled:
+            self._was_canceled = True
+            success = False
+
         self.finished.emit(success)
+
+
+class MultiExtractWorker(QThread):
+    """Worker thread for extracting multiple items without blocking UI."""
+
+    finished = pyqtSignal(int, int, bool)  # extracted_count, failed_count, canceled
+    progress = pyqtSignal(int, int)  # current, total
+
+    def __init__(
+        self,
+        archive_service: "ArchiveService",
+        items: list[tuple[str, bool]],
+        dest_root: str,
+    ) -> None:
+        super().__init__()
+        self._archive_service = archive_service
+        self._items = items
+        self._dest_root = Path(dest_root)
+        self._cancel_requested = False
+
+    def request_cancel(self) -> None:
+        """Request cancellation of the extraction."""
+        self._cancel_requested = True
+
+    def run(self) -> None:
+        total = len(self._items)
+        extracted = 0
+        failed = 0
+
+        def is_canceled() -> bool:
+            return self._cancel_requested
+
+        for index, (pk2_path, is_folder) in enumerate(self._items, start=1):
+            if is_canceled():
+                self.finished.emit(extracted, failed, True)
+                return
+
+            try:
+                if is_folder:
+                    folder_dest = (
+                        self._dest_root / pk2_path if pk2_path else self._dest_root / "root"
+                    )
+                    folder_dest.parent.mkdir(parents=True, exist_ok=True)
+                    success = self._archive_service.extract_folder(
+                        pk2_path,
+                        str(folder_dest),
+                        cancel=is_canceled,
+                    )
+                else:
+                    file_dest = self._dest_root / pk2_path
+                    file_dest.parent.mkdir(parents=True, exist_ok=True)
+                    success = self._archive_service.extract_file(
+                        pk2_path,
+                        str(file_dest),
+                        cancel=is_canceled,
+                    )
+                if success:
+                    extracted += 1
+                else:
+                    failed += 1
+            except ArchiveOperationCanceled:
+                self.finished.emit(extracted, failed, True)
+                return
+
+            self.progress.emit(index, total)
+
+        self.finished.emit(extracted, failed, False)
 
 
 class MainWindow(QMainWindow):
@@ -468,44 +558,31 @@ class MainWindow(QMainWindow):
 
     def _on_extract_multiple(self, items: list[tuple[str, bool]]) -> None:
         """Handle extract request for multiple items."""
-        dest = QFileDialog.getExistingDirectory(
-            self, "Select Destination Folder", ""
-        )
+        dest = QFileDialog.getExistingDirectory(self, "Select Destination Folder", "")
         if not dest:
             return
 
-        dest_path = Path(dest)
-        extracted = 0
-        failed = 0
+        self._multi_extract_progress = QProgressDialog(
+            "Extracting items...", "Cancel", 0, len(items), self
+        )
+        self._multi_extract_progress.setWindowTitle("Extracting")
+        self._multi_extract_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._multi_extract_progress.setMinimumDuration(0)
+        self._multi_extract_progress.setValue(0)
+        self._multi_extract_progress.show()
 
-        for pk2_path, is_folder in items:
-            if is_folder:
-                # Preserve full path hierarchy for folders
-                folder_dest = dest_path / pk2_path if pk2_path else dest_path / "root"
-                folder_dest.parent.mkdir(parents=True, exist_ok=True)
-                if self._archive_service.extract_folder(pk2_path, str(folder_dest)):
-                    extracted += 1
-                else:
-                    failed += 1
-            else:
-                # Preserve full path hierarchy for files
-                file_dest = dest_path / pk2_path
-                file_dest.parent.mkdir(parents=True, exist_ok=True)
-                if self._archive_service.extract_file(pk2_path, str(file_dest)):
-                    extracted += 1
-                else:
-                    failed += 1
-
-        if failed == 0:
-            QMessageBox.information(
-                self, "Extract Complete", f"Extracted {extracted} items to: {dest}"
-            )
-        else:
-            QMessageBox.warning(
-                self,
-                "Extract Partial",
-                f"Extracted {extracted} items, {failed} failed.\nDestination: {dest}",
-            )
+        self._multi_extract_worker = MultiExtractWorker(
+            self._archive_service, items, dest
+        )
+        self._multi_extract_worker.progress.connect(self._on_multi_extract_progress)
+        self._multi_extract_worker.finished.connect(self._on_multi_extract_finished)
+        self._multi_extract_progress.canceled.connect(
+            self._multi_extract_worker.request_cancel
+        )
+        self._multi_extract_progress.canceled.connect(
+            lambda: self._multi_extract_progress.setLabelText("Canceling extraction...")
+        )
+        self._multi_extract_worker.start()
 
     def _on_delete_multiple(self, items: list[tuple[str, bool]]) -> None:
         """Handle delete request for multiple items."""
@@ -521,11 +598,18 @@ class MainWindow(QMainWindow):
             return
 
         # Delete in reverse order to handle nested items correctly
-        for pk2_path, is_folder in reversed(items):
-            if is_folder:
-                self._archive_service.delete_folder(pk2_path)
-            else:
-                self._archive_service.delete_file(pk2_path)
+        any_deleted = False
+        self._archive_service.set_archive_modified_suppressed(True)
+        try:
+            for pk2_path, is_folder in reversed(items):
+                if is_folder:
+                    any_deleted = self._archive_service.delete_folder(pk2_path) or any_deleted
+                else:
+                    any_deleted = self._archive_service.delete_file(pk2_path) or any_deleted
+        finally:
+            self._archive_service.set_archive_modified_suppressed(False)
+            if any_deleted:
+                self._archive_service.notify_archive_modified()
 
     def _on_extract_item(self, pk2_path: str, is_folder: bool) -> None:
         """Handle extract request."""
@@ -567,23 +651,62 @@ class MainWindow(QMainWindow):
         )
         self._extract_worker.progress.connect(self._on_extract_progress)
         self._extract_worker.finished.connect(self._on_extract_finished)
-        self._extract_progress.canceled.connect(self._extract_worker.terminate)
+        self._extract_progress.canceled.connect(self._extract_worker.request_cancel)
+        self._extract_progress.canceled.connect(
+            lambda: self._extract_progress.setLabelText("Canceling extraction...")
+        )
         self._extract_worker.start()
 
     def _on_extract_progress(self, current: int, total: int) -> None:
         """Handle extraction progress update."""
         if total > 0:
             percent = int(current * 100 / total)
+            self._extract_progress.setRange(0, 100)
             self._extract_progress.setValue(percent)
             self._extract_progress.setLabelText(f"Extracting files... ({current}/{total})")
+        else:
+            self._extract_progress.setRange(0, 0)
+            self._extract_progress.setLabelText(f"Extracting files... ({current})")
 
     def _on_extract_finished(self, success: bool) -> None:
         """Handle extraction completion."""
         self._extract_progress.close()
         self._extract_worker.deleteLater()
-        if success:
+        if self._extract_worker.was_canceled:
+            QMessageBox.information(self, "Extract Canceled", "Extraction was canceled.")
+        elif success:
             QMessageBox.information(
                 self, "Extract Complete", f"Extracted to: {self._extract_dest}"
+            )
+
+    def _on_multi_extract_progress(self, current: int, total: int) -> None:
+        """Handle multi-extract progress update."""
+        self._multi_extract_progress.setValue(current)
+        self._multi_extract_progress.setLabelText(
+            f"Extracting items... ({current}/{total})"
+        )
+
+    def _on_multi_extract_finished(
+        self, extracted: int, failed: int, canceled: bool
+    ) -> None:
+        """Handle multi-extract completion."""
+        self._multi_extract_progress.close()
+        self._multi_extract_worker.deleteLater()
+        if canceled:
+            QMessageBox.information(
+                self, "Extract Canceled", "Extraction was canceled."
+            )
+        elif failed == 0:
+            QMessageBox.information(
+                self,
+                "Extract Complete",
+                f"Extracted {extracted} items.",
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Extract Partial",
+                f"Extracted {extracted} items, {failed} failed.",
             )
 
     def _on_delete_item(self, pk2_path: str, is_folder: bool) -> None:

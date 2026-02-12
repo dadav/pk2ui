@@ -46,6 +46,10 @@ All components communicate via PyQt6 signals rather than direct method calls:
 
 MainWindow connects these signals to handler methods that coordinate between components.
 
+### Archive Operation Notes
+- `ArchiveService` supports batching by suppressing `archive_modified` via `set_archive_modified_suppressed()` and manually emitting with `notify_archive_modified()`.
+- Extraction methods accept an optional cancel callback and may raise `ArchiveOperationCanceled` for cooperative cancellation.
+
 ### Adding New Features
 1. Create a new module under `features/` with its own subdirectory
 2. Define signals for user actions and state changes

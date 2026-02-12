@@ -9,6 +9,12 @@ from pk2api import Pk2AuthenticationError, Pk2File, Pk2Folder, Pk2Stream
 
 # Type alias for progress callback
 ProgressCallback = Callable[[int, int], None]
+CancelCallback = Callable[[], bool]
+
+class ArchiveOperationCanceled(Exception):
+    """Raised when an archive operation is canceled by the user."""
+    pass
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +32,7 @@ class ArchiveService(QObject):
         super().__init__()
         self._stream: Optional[Pk2Stream] = None
         self._path: Optional[Path] = None
+        self._suppress_archive_modified = False
 
     @property
     def is_open(self) -> bool:
@@ -83,6 +90,15 @@ class ArchiveService(QObject):
             self._path = None
             self.archive_closed.emit()
 
+    def set_archive_modified_suppressed(self, suppressed: bool) -> None:
+        """Enable or disable archive_modified signal emission."""
+        self._suppress_archive_modified = suppressed
+
+    def notify_archive_modified(self) -> None:
+        """Emit archive_modified if not suppressed."""
+        if not self._suppress_archive_modified:
+            self.archive_modified.emit()
+
     def get_file(self, path: str) -> Optional[Pk2File]:
         """Get a file by path."""
         if not self._stream:
@@ -95,18 +111,32 @@ class ArchiveService(QObject):
             return None
         return self._stream.get_folder(path)
 
-    def extract_file(self, pk2_path: str, dest_path: str) -> bool:
+    def extract_file(
+        self,
+        pk2_path: str,
+        dest_path: str,
+        cancel: Optional[CancelCallback] = None,
+    ) -> bool:
         """Extract a file to disk."""
         logger.info("Extracting: %s -> %s", pk2_path, dest_path)
+        if cancel and cancel():
+            raise ArchiveOperationCanceled()
         file = self.get_file(pk2_path)
         if not file:
             self.operation_error.emit("Extract Error", f"File not found: {pk2_path}")
             return False
         try:
+            if cancel and cancel():
+                raise ArchiveOperationCanceled()
             content = file.get_content()
+            if cancel and cancel():
+                raise ArchiveOperationCanceled()
             Path(dest_path).write_bytes(content)
             logger.info("Extracted %d bytes", len(content))
             return True
+        except ArchiveOperationCanceled:
+            logger.info("Extract canceled: %s", pk2_path)
+            raise
         except Exception as e:
             logger.exception("Extract failed: %s", pk2_path)
             self.operation_error.emit("Extract Error", str(e))
@@ -117,6 +147,7 @@ class ArchiveService(QObject):
         pk2_path: str,
         dest_path: str,
         progress: Optional[ProgressCallback] = None,
+        cancel: Optional[CancelCallback] = None,
     ) -> bool:
         """Extract a folder and all contents to disk.
 
@@ -126,10 +157,19 @@ class ArchiveService(QObject):
         if not self._stream:
             return False
         try:
+            def progress_wrapper(current: int, total: int) -> None:
+                if cancel and cancel():
+                    raise ArchiveOperationCanceled()
+                if progress:
+                    progress(current, total)
+
             # Use pk2api 1.1.0 extract_folder method with progress callback
-            self._stream.extract_folder(pk2_path, dest_path, progress=progress)
+            self._stream.extract_folder(pk2_path, dest_path, progress=progress_wrapper)
             logger.info("Folder extraction complete: %s", pk2_path)
             return True
+        except ArchiveOperationCanceled:
+            logger.info("Folder extraction canceled: %s", pk2_path)
+            raise
         except AttributeError:
             # Fallback to manual extraction if extract_folder not available
             logger.info("Falling back to manual folder extraction")
@@ -141,7 +181,7 @@ class ArchiveService(QObject):
                 return False
             dest = Path(dest_path)
             dest.mkdir(parents=True, exist_ok=True)
-            return self._extract_folder_recursive(folder, dest, pk2_path)
+            return self._extract_folder_recursive(folder, dest, pk2_path, cancel=cancel)
         except Exception as e:
             logger.exception("Extract folder failed: %s", pk2_path)
             self.operation_error.emit("Extract Error", str(e))
@@ -151,6 +191,7 @@ class ArchiveService(QObject):
         self,
         dest_path: str,
         progress: Optional[ProgressCallback] = None,
+        cancel: Optional[CancelCallback] = None,
     ) -> bool:
         """Extract entire archive to disk.
 
@@ -160,30 +201,60 @@ class ArchiveService(QObject):
         if not self._stream:
             return False
         try:
-            self._stream.extract_all(dest_path, progress=progress)
+            def progress_wrapper(current: int, total: int) -> None:
+                if cancel and cancel():
+                    raise ArchiveOperationCanceled()
+                if progress:
+                    progress(current, total)
+
+            self._stream.extract_all(dest_path, progress=progress_wrapper)
             logger.info("Full archive extraction complete")
             return True
+        except ArchiveOperationCanceled:
+            logger.info("Full archive extraction canceled")
+            raise
         except Exception as e:
             logger.exception("Extract all failed")
             self.operation_error.emit("Extract Error", str(e))
             return False
 
     def _extract_folder_recursive(
-        self, folder: Pk2Folder, dest: Path, pk2_path: str
+        self,
+        folder: Pk2Folder,
+        dest: Path,
+        pk2_path: str,
+        cancel: Optional[CancelCallback] = None,
     ) -> bool:
         """Recursively extract folder contents (fallback for older pk2api)."""
         # Extract files
         for name, file in folder.files.items():
+            if cancel and cancel():
+                raise ArchiveOperationCanceled()
             file_dest = dest / name
-            content = file.get_content()
-            file_dest.write_bytes(content)
+            try:
+                content = file.get_content()
+                file_dest.write_bytes(content)
+            except ArchiveOperationCanceled:
+                raise
+            except Exception:
+                logger.exception("Failed to extract file: %s", file_dest)
+                self.operation_error.emit("Extract Error", f"Failed to extract: {pk2_path}/{name}")
+                return False
 
         # Extract subfolders
         for name, subfolder in folder.folders.items():
+            if cancel and cancel():
+                raise ArchiveOperationCanceled()
             subfolder_dest = dest / name
             subfolder_dest.mkdir(exist_ok=True)
             subfolder_pk2_path = f"{pk2_path}/{name}" if pk2_path else name
-            self._extract_folder_recursive(subfolder, subfolder_dest, subfolder_pk2_path)
+            if not self._extract_folder_recursive(
+                subfolder,
+                subfolder_dest,
+                subfolder_pk2_path,
+                cancel=cancel,
+            ):
+                return False
 
         return True
 
@@ -197,7 +268,7 @@ class ArchiveService(QObject):
             success = self._stream.add_file(pk2_path, content)
             if success:
                 logger.info("Imported %d bytes", len(content))
-                self.archive_modified.emit()
+                self.notify_archive_modified()
             else:
                 self.operation_error.emit("Import Error", "Failed to add file")
             return success
@@ -220,7 +291,7 @@ class ArchiveService(QObject):
             self._stream.import_from_disk(disk_path, pk2_path)
             # Count imported files from disk source
             imported = self._count_disk_files(Path(disk_path))
-            self.archive_modified.emit()
+            self.notify_archive_modified()
             logger.info("Folder import complete via import_from_disk")
             return (imported, 0)
         except AttributeError:
@@ -228,7 +299,7 @@ class ArchiveService(QObject):
             logger.info("Falling back to manual folder import")
             imported, failed = self._import_folder_recursive(Path(disk_path), pk2_path)
             if imported > 0:
-                self.archive_modified.emit()
+                self.notify_archive_modified()
             logger.info("Folder import complete: %d imported, %d failed", imported, failed)
             return (imported, failed)
         except Exception as e:
@@ -289,7 +360,7 @@ class ArchiveService(QObject):
         try:
             success = self._stream.add_folder(pk2_path)
             if success:
-                self.archive_modified.emit()
+                self.notify_archive_modified()
             else:
                 self.operation_error.emit(
                     "Create Folder Error", "Folder already exists or invalid path"
@@ -308,7 +379,7 @@ class ArchiveService(QObject):
         try:
             success = self._stream.remove_file(pk2_path)
             if success:
-                self.archive_modified.emit()
+                self.notify_archive_modified()
             return success
         except Exception as e:
             logger.exception("Delete failed: %s", pk2_path)
@@ -323,7 +394,7 @@ class ArchiveService(QObject):
         try:
             success = self._stream.remove_folder(pk2_path)
             if success:
-                self.archive_modified.emit()
+                self.notify_archive_modified()
             return success
         except Exception as e:
             logger.exception("Delete failed: %s", pk2_path)
