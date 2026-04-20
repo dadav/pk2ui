@@ -90,7 +90,7 @@ jobs:
           mv release-artifacts/pk2ui "release-artifacts/pk2ui-v${{ steps.tag.outputs.VERSION }}-linux"
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           tag_name: ${{ steps.tag.outputs.TAG_NAME }}
           name: Release ${{ steps.tag.outputs.TAG_NAME }}
