@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           enable-cache: true
 
@@ -90,7 +90,7 @@ jobs:
           mv release-artifacts/pk2ui "release-artifacts/pk2ui-v${{ steps.tag.outputs.VERSION }}-linux"
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           tag_name: ${{ steps.tag.outputs.TAG_NAME }}
           name: Release ${{ steps.tag.outputs.TAG_NAME }}
